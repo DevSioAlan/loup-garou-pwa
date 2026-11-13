@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -35,7 +35,29 @@ interface RoomPageProps {
   params: Promise<{ code: string }>;
 }
 
+function RoomSuspenseFallback() {
+  return (
+    <div className="glass-panel flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl p-8 text-center">
+      <Loader2 className="h-8 w-8 animate-spin text-amber-300" />
+      <p className="font-display text-sm font-semibold tracking-wider text-amber-100">
+        Ouverture du salon sous la Lune de Sang...
+      </p>
+    </div>
+  );
+}
+
 export default function RoomPage({ params }: RoomPageProps) {
+  return (
+    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-hidden px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
+      <BloodMoonBackdrop />
+      <Suspense fallback={<RoomSuspenseFallback />}>
+        <RoomContent params={params} />
+      </Suspense>
+    </main>
+  );
+}
+
+function RoomContent({ params }: RoomPageProps) {
   const { code } = use(params);
   const normalizedCode = code.trim().toUpperCase();
 
@@ -241,9 +263,7 @@ export default function RoomPage({ params }: RoomPageProps) {
     players.find((p) => p.user_id === userId) ?? null;
 
   return (
-    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-hidden px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
-      <BloodMoonBackdrop />
-
+    <>
       {/* Barre supérieure du salon */}
       <header className="flex items-center justify-between gap-2">
         <Link
@@ -339,6 +359,6 @@ export default function RoomPage({ params }: RoomPageProps) {
           )}
         </div>
       )}
-    </main>
+    </>
   );
 }
