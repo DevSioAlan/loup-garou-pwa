@@ -1,23 +1,77 @@
-import { ROLE_BY_ID } from "@/data/roles";
-import { AVATAR_PRESETS } from "@/lib/profileStorage";
 import type {
   AvatarPresetId,
+  GameLogEntry,
   GamePhase,
+  NightStepId,
   NightVictimEntry,
   PlayerProfile,
-  RoleComposition,
   RoomGameState,
   RoomPlayerRecord,
 } from "@/types/game";
 
-export const WOLF_ROLE_IDS = new Set([
+export const WOLF_ROLE_IDS = [
   "loup-garou",
   "loup-garou-blanc",
   "grand-mechant-loup",
+  "infect-pere-des-loups",
+];
+
+const VALID_AVATAR_PRESETS = new Set<AvatarPresetId>([
+  "wolf",
+  "moon",
+  "crown",
+  "eye",
+  "flask",
+  "flame",
+  "shield",
+  "sparkles",
+  "bird",
+  "fox",
+  "music",
+  "sword",
 ]);
 
+const NIGHT_STEP_ORDER: Array<{
+  step: Exclude<NightStepId, null>;
+  phase: GamePhase;
+}> = [
+  { step: "cupidon", phase: "NIGHT_CUPIDON" },
+  { step: "enfant-sauvage", phase: "NIGHT_CUPIDON" },
+  { step: "fratrie", phase: "NIGHT_CUPIDON" },
+  { step: "salvateur", phase: "NIGHT_SEER" },
+  { step: "voyante", phase: "NIGHT_SEER" },
+  { step: "renard", phase: "NIGHT_SEER" },
+  { step: "loups", phase: "NIGHT_WEREWOLVES" },
+  { step: "loup-blanc", phase: "NIGHT_WEREWOLVES" },
+  { step: "grand-mechant-loup", phase: "NIGHT_WEREWOLVES" },
+  { step: "sorciere", phase: "NIGHT_WITCH" },
+  { step: "corbeau", phase: "NIGHT_WITCH" },
+  { step: "joueur-de-flute", phase: "NIGHT_WITCH" },
+];
+
 export function isWolfRole(roleId: string | null | undefined): boolean {
-  return Boolean(roleId && WOLF_ROLE_IDS.has(roleId));
+  return Boolean(roleId && WOLF_ROLE_IDS.includes(roleId));
+}
+
+export function isEffectiveWolf(
+  player: Pick<RoomPlayerRecord, "id" | "role">,
+  gameState?: Partial<RoomGameState> | null
+): boolean {
+  if (isWolfRole(player.role)) return true;
+  if (gameState?.infectedPlayerIds?.includes(player.id)) return true;
+  if (player.role === "enfant-sauvage" && gameState?.wildChildTransformed) {
+    return true;
+  }
+  return false;
+}
+
+export function generateRoomCode(): string {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let code = "";
+  for (let i = 0; i < 4; i++) {
+    code += letters.charAt(Math.floor(Math.random() * letters.length));
+  }
+  return code;
 }
 
 export function createInitialGameState(): RoomGameState {
@@ -40,23 +94,84 @@ export function createInitialGameState(): RoomGameState {
     phaseDeadline: null,
     readyUserIds: [],
     elderShieldUsed: false,
+    nightStep: null,
+    salvateurLastTargetId: null,
+    salvateurTargetId: null,
+    salvateurSavedTonight: false,
+    foxUsedWrongly: false,
+    foxCheckedTonight: false,
+    foxLastResult: null,
+    corbeauTargetId: null,
+    infectUsed: false,
+    infectTonight: false,
+    infectedPlayerIds: [],
+    grandMechantSecondTargetId: null,
+    charmedPlayerIds: [],
+    piperTargetsTonight: [],
+    wildChildModelId: null,
+    wildChildTransformed: false,
+    servanteUsed: false,
+    rustyKnightPendingWolfId: null,
+    idiotSparedPlayerIds: [],
+    loupBlancTargetId: null,
+    bearGrowledTonight: false,
+    elderShieldTriggeredTonight: false,
+    eventLog: [],
+    reactions: {},
   };
 }
 
-/**
- * Génère un code de salon aléatoire à 4 lettres majuscules lisibles.
- */
-export function generateRoomCode(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  let code = "";
-  for (let i = 0; i < 4; i++) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return code;
+export function normalizeGameState(
+  raw?: Partial<RoomGameState> | null
+): RoomGameState {
+  const base = createInitialGameState();
+  if (!raw || typeof raw !== "object") return base;
+
+  return {
+    ...base,
+    ...raw,
+    cupidonTargets: Array.isArray(raw.cupidonTargets) ? raw.cupidonTargets : [],
+    nightVictims: Array.isArray(raw.nightVictims) ? raw.nightVictims : [],
+    readyUserIds: Array.isArray(raw.readyUserIds) ? raw.readyUserIds : [],
+    infectedPlayerIds: Array.isArray(raw.infectedPlayerIds)
+      ? raw.infectedPlayerIds
+      : [],
+    charmedPlayerIds: Array.isArray(raw.charmedPlayerIds)
+      ? raw.charmedPlayerIds
+      : [],
+    piperTargetsTonight: Array.isArray(raw.piperTargetsTonight)
+      ? raw.piperTargetsTonight
+      : [],
+    idiotSparedPlayerIds: Array.isArray(raw.idiotSparedPlayerIds)
+      ? raw.idiotSparedPlayerIds
+      : [],
+    eventLog: Array.isArray(raw.eventLog) ? raw.eventLog : [],
+    reactions:
+      raw.reactions && typeof raw.reactions === "object" ? raw.reactions : {},
+    nightStep: raw.nightStep ?? null,
+  };
+}
+
+export function appendGameLog(
+  existingLog: GameLogEntry[] | undefined,
+  entry: Omit<GameLogEntry, "id" | "timestamp">
+): GameLogEntry[] {
+  const current = Array.isArray(existingLog) ? existingLog : [];
+  const next: GameLogEntry = {
+    ...entry,
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: new Date().toISOString(),
+  };
+  return [...current.slice(-29), next];
 }
 
 export function encodeProfileAvatar(profile: PlayerProfile): string {
-  if (profile.avatarType === "upload" && profile.avatarDataUrl) {
+  if (
+    profile.avatarType === "upload" &&
+    profile.avatarDataUrl &&
+    (profile.avatarDataUrl.startsWith("data:image/") ||
+      profile.avatarDataUrl.startsWith("data:video/"))
+  ) {
     return profile.avatarDataUrl;
   }
   return `preset:${profile.avatarPreset}`;
@@ -67,266 +182,437 @@ export function decodeAvatarToProfile(
   pseudo: string,
   isOwner: boolean
 ): PlayerProfile {
-  if (avatarData && avatarData.startsWith("data:image/")) {
+  if (
+    avatarData &&
+    (avatarData.startsWith("data:image/") ||
+      avatarData.startsWith("data:video/"))
+  ) {
     return {
       nickname: pseudo,
       avatarType: "upload",
-      avatarPreset: "wolf",
+      avatarPreset: "moon",
       avatarDataUrl: avatarData,
       isOwner,
     };
   }
 
-  const presetCandidate = avatarData?.startsWith("preset:")
-    ? (avatarData.slice("preset:".length) as AvatarPresetId)
-    : "wolf";
-  const validPreset = AVATAR_PRESETS.some((p) => p.id === presetCandidate)
-    ? presetCandidate
-    : "wolf";
+  let preset: AvatarPresetId = "moon";
+  if (avatarData?.startsWith("preset:")) {
+    const rawPreset = avatarData.replace("preset:", "") as AvatarPresetId;
+    if (VALID_AVATAR_PRESETS.has(rawPreset)) {
+      preset = rawPreset;
+    } else if ((rawPreset as string) === "paw") {
+      preset = "wolf";
+    }
+  }
 
   return {
     nickname: pseudo,
     avatarType: "preset",
-    avatarPreset: validPreset,
+    avatarPreset: preset,
     avatarDataUrl: null,
     isOwner,
   };
 }
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const copy = [...arr];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
 /**
- * Distribue aléatoirement les rôles configurés aux joueurs connectés.
- * Adapte proprement le deck si le nombre de joueurs diffère (ex. tests rapides).
+ * Mélange Fisher-Yates et distribue les rôles choisis dans la composition.
  */
 export function dealRolesToPlayers(
   players: RoomPlayerRecord[],
-  composition: RoleComposition
+  composition: Record<string, number>
 ): Array<{ playerId: string; roleId: string }> {
-  const count = players.length;
-  if (count === 0) return [];
-
-  const fullDeck: string[] = [];
-  for (const [roleId, qty] of Object.entries(composition)) {
-    for (let i = 0; i < qty; i++) {
-      fullDeck.push(roleId);
+  const pool: string[] = [];
+  for (const [roleId, count] of Object.entries(composition)) {
+    for (let i = 0; i < count; i++) {
+      pool.push(roleId);
     }
   }
 
-  let deck = fullDeck;
-  if (deck.length < count) {
-    while (deck.length < count) {
-      deck.push("simple-villageois");
-    }
-  } else if (deck.length > count) {
-    const wolves = deck.filter((r) => isWolfRole(r));
-    const specials = deck.filter(
-      (r) => !isWolfRole(r) && r !== "simple-villageois"
-    );
-    const villagers = deck.filter((r) => r === "simple-villageois");
-
-    const trimmed: string[] = [];
-    if (count >= 2 && wolves.length > 0) {
-      trimmed.push(wolves[0]);
-    }
-    for (const s of specials) {
-      if (trimmed.length < count) trimmed.push(s);
-    }
-    for (let i = 1; i < wolves.length && trimmed.length < count; i++) {
-      trimmed.push(wolves[i]);
-    }
-    for (const v of villagers) {
-      if (trimmed.length < count) trimmed.push(v);
-    }
-    while (trimmed.length < count) {
-      trimmed.push("simple-villageois");
-    }
-    deck = trimmed;
+  while (pool.length < players.length) {
+    pool.push("simple-villageois");
   }
 
-  const shuffledRoles = shuffleArray(deck);
-  return players.map((player, idx) => ({
-    playerId: player.id,
-    roleId: shuffledRoles[idx] ?? "simple-villageois",
+  const trimmed = pool.slice(0, players.length);
+  for (let i = trimmed.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [trimmed[i], trimmed[j]] = [trimmed[j], trimmed[i]];
+  }
+
+  return players.map((p, idx) => ({
+    playerId: p.id,
+    roleId: trimmed[idx] ?? "simple-villageois",
   }));
 }
 
-export function getPhaseDurationSeconds(phase: GamePhase): number | null {
-  switch (phase) {
-    case "ROLE_REVEAL":
-      return 16;
-    case "NIGHT_CUPIDON":
-      return 22;
-    case "NIGHT_SEER":
-      return 20;
-    case "NIGHT_WEREWOLVES":
-      return 28;
-    case "NIGHT_WITCH":
-      return 24;
-    case "DAY_ANNOUNCEMENT":
-      return 10;
-    case "DAY_VOTE":
-      return 45;
-    case "HUNTER_SHOT":
-      return 22;
-    case "LOBBY":
-    case "VICTORY":
-    default:
-      return null;
+export function getPhaseDurationSeconds(
+  phase: GamePhase,
+  nightStep?: NightStepId | null
+): number | null {
+  if (phase === "ROLE_REVEAL") return 22;
+  if (phase === "DAY_ANNOUNCEMENT") return 18;
+  if (phase === "DAY_VOTE") return 90;
+  if (phase === "HUNTER_SHOT") return 25;
+
+  if (phase.startsWith("NIGHT_")) {
+    switch (nightStep) {
+      case "cupidon":
+        return 25;
+      case "enfant-sauvage":
+        return 22;
+      case "fratrie":
+        return 18;
+      case "salvateur":
+      case "voyante":
+      case "renard":
+      case "corbeau":
+        return 24;
+      case "loups":
+        return 35;
+      case "loup-blanc":
+      case "grand-mechant-loup":
+        return 24;
+      case "sorciere":
+      case "joueur-de-flute":
+        return 26;
+      default:
+        return phase === "NIGHT_WEREWOLVES" ? 35 : 25;
+    }
   }
+
+  return null;
 }
 
-export function buildPhaseDeadline(phase: GamePhase): string | null {
-  const sec = getPhaseDurationSeconds(phase);
+export function buildPhaseDeadline(
+  phase: GamePhase,
+  nightStep?: NightStepId | null
+): string | null {
+  const sec = getPhaseDurationSeconds(phase, nightStep);
   if (!sec) return null;
   return new Date(Date.now() + sec * 1000).toISOString();
 }
 
-export function hasAliveRole(
+export function isNightStepActive(
+  step: Exclude<NightStepId, null>,
   players: RoomPlayerRecord[],
-  roleId: string
+  gameState: RoomGameState,
+  turnNumber: number
 ): boolean {
-  return players.some((p) => p.is_alive && p.role === roleId);
+  const alive = players.filter((p) => p.is_alive);
+  const hasAliveRole = (roleId: string) =>
+    alive.some((p) => p.role === roleId);
+  const countAliveRole = (roleId: string) =>
+    alive.filter((p) => p.role === roleId).length;
+
+  switch (step) {
+    case "cupidon":
+      return (
+        turnNumber === 1 &&
+        hasAliveRole("cupidon") &&
+        !gameState.lovers &&
+        alive.length >= 2
+      );
+    case "enfant-sauvage":
+      return (
+        turnNumber === 1 &&
+        hasAliveRole("enfant-sauvage") &&
+        !gameState.wildChildModelId &&
+        alive.length >= 2
+      );
+    case "fratrie":
+      return (
+        turnNumber === 1 &&
+        (countAliveRole("soeurs") >= 2 || countAliveRole("freres") >= 2)
+      );
+    case "salvateur":
+      return hasAliveRole("salvateur");
+    case "voyante":
+      return hasAliveRole("voyante");
+    case "renard":
+      return hasAliveRole("renard") && !gameState.foxUsedWrongly;
+    case "loups":
+      return alive.some((p) => isEffectiveWolf(p, gameState));
+    case "loup-blanc":
+      return (
+        turnNumber % 2 === 0 &&
+        hasAliveRole("loup-garou-blanc") &&
+        alive.filter((p) => isEffectiveWolf(p, gameState)).length >= 2
+      );
+    case "grand-mechant-loup": {
+      const hasAnyWolfDied = players.some(
+        (p) => !p.is_alive && isEffectiveWolf(p, gameState)
+      );
+      return hasAliveRole("grand-mechant-loup") && !hasAnyWolfDied;
+    }
+    case "sorciere":
+      return (
+        hasAliveRole("sorciere") &&
+        (!gameState.witchLifeUsed || !gameState.witchDeathUsed)
+      );
+    case "corbeau":
+      return hasAliveRole("corbeau");
+    case "joueur-de-flute":
+      return (
+        hasAliveRole("joueur-de-flute") &&
+        alive.some(
+          (p) =>
+            p.role !== "joueur-de-flute" &&
+            !gameState.charmedPlayerIds.includes(p.id)
+        )
+      );
+    default:
+      return false;
+  }
 }
 
-export function hasAliveWolf(players: RoomPlayerRecord[]): boolean {
-  return players.some((p) => p.is_alive && isWolfRole(p.role));
+export function resolveNextNightStep(
+  currentPhase: GamePhase,
+  currentStep: NightStepId | undefined,
+  players: RoomPlayerRecord[],
+  gameState: RoomGameState,
+  turnNumber: number
+): { phase: GamePhase; nightStep: Exclude<NightStepId, null> } | null {
+  let startIndex = 0;
+
+  if (
+    currentPhase === "ROLE_REVEAL" ||
+    currentPhase === "DAY_VOTE" ||
+    currentPhase === "HUNTER_SHOT"
+  ) {
+    startIndex = 0;
+  } else if (currentStep) {
+    const idx = NIGHT_STEP_ORDER.findIndex((item) => item.step === currentStep);
+    startIndex = idx >= 0 ? idx + 1 : 0;
+  } else {
+    const legacyFallback: Partial<Record<GamePhase, Exclude<NightStepId, null>>> =
+      {
+        NIGHT_CUPIDON: "cupidon",
+        NIGHT_SEER: "voyante",
+        NIGHT_WEREWOLVES: "loups",
+        NIGHT_WITCH: "sorciere",
+      };
+    const inferred = legacyFallback[currentPhase];
+    const idx = inferred
+      ? NIGHT_STEP_ORDER.findIndex((item) => item.step === inferred)
+      : -1;
+    startIndex = idx >= 0 ? idx + 1 : NIGHT_STEP_ORDER.length;
+  }
+
+  for (let i = startIndex; i < NIGHT_STEP_ORDER.length; i++) {
+    const candidate = NIGHT_STEP_ORDER[i];
+    if (isNightStepActive(candidate.step, players, gameState, turnNumber)) {
+      return { phase: candidate.phase, nightStep: candidate.step };
+    }
+  }
+
+  return null;
 }
 
 /**
- * Calcule la prochaine phase nocturne disponible selon les rôles encore en vie.
+ * Wrapper rétro-compatible retournant la phase DB suivante ("DAY_ANNOUNCEMENT" en fin de nuit).
  */
 export function resolveNextNightPhase(
   currentPhase: GamePhase,
   players: RoomPlayerRecord[],
-  turnNumber: number
+  turnNumber: number,
+  gameState: RoomGameState = createInitialGameState(),
+  currentStep: NightStepId | undefined = gameState.nightStep
 ): GamePhase {
-  const sequence: GamePhase[] = [
-    "NIGHT_CUPIDON",
-    "NIGHT_SEER",
-    "NIGHT_WEREWOLVES",
-    "NIGHT_WITCH",
-    "DAY_ANNOUNCEMENT",
-  ];
+  const next = resolveNextNightStep(
+    currentPhase,
+    currentStep,
+    players,
+    gameState,
+    turnNumber
+  );
+  return next ? next.phase : "DAY_ANNOUNCEMENT";
+}
 
-  const startIndex =
-    currentPhase === "ROLE_REVEAL" || currentPhase === "DAY_VOTE"
-      ? 0
-      : sequence.indexOf(currentPhase) + 1;
+export function getAliveNeighbors(
+  players: RoomPlayerRecord[],
+  centerPlayerId: string
+): { prev: RoomPlayerRecord | null; next: RoomPlayerRecord | null } {
+  const alive = players.filter((p) => p.is_alive);
+  const idx = alive.findIndex((p) => p.id === centerPlayerId);
+  if (idx === -1 || alive.length <= 1) {
+    return { prev: null, next: null };
+  }
+  if (alive.length === 2) {
+    return { prev: alive[(idx + 1) % 2], next: null };
+  }
+  const prev = alive[(idx - 1 + alive.length) % alive.length];
+  const next = alive[(idx + 1) % alive.length];
+  return { prev, next };
+}
 
-  for (let i = Math.max(0, startIndex); i < sequence.length; i++) {
-    const candidate = sequence[i];
-    if (candidate === "NIGHT_CUPIDON") {
-      if (turnNumber === 1 && hasAliveRole(players, "cupidon")) {
-        return "NIGHT_CUPIDON";
-      }
-      continue;
-    }
-    if (candidate === "NIGHT_SEER") {
-      if (hasAliveRole(players, "voyante")) {
-        return "NIGHT_SEER";
-      }
-      continue;
-    }
-    if (candidate === "NIGHT_WEREWOLVES") {
-      if (hasAliveWolf(players)) {
-        return "NIGHT_WEREWOLVES";
-      }
-      continue;
-    }
-    if (candidate === "NIGHT_WITCH") {
-      if (hasAliveRole(players, "sorciere")) {
-        return "NIGHT_WITCH";
-      }
-      continue;
-    }
-    return candidate;
+export function checkFoxTargets(
+  players: RoomPlayerRecord[],
+  centerId: string,
+  gameState: RoomGameState
+): { inspectedIds: string[]; names: string[]; hasWolf: boolean } {
+  const center = players.find((p) => p.id === centerId && p.is_alive);
+  if (!center) {
+    return { inspectedIds: [], names: [], hasWolf: false };
   }
 
-  return "DAY_ANNOUNCEMENT";
+  const { prev, next } = getAliveNeighbors(players, centerId);
+  const uniquePlayers: RoomPlayerRecord[] = [];
+  const seen = new Set<string>();
+  for (const p of [prev, center, next]) {
+    if (p && !seen.has(p.id)) {
+      seen.add(p.id);
+      uniquePlayers.push(p);
+    }
+  }
+
+  return {
+    inspectedIds: uniquePlayers.map((p) => p.id),
+    names: uniquePlayers.map((p) => p.pseudo),
+    hasWolf: uniquePlayers.some((p) => isEffectiveWolf(p, gameState)),
+  };
+}
+
+export function didBearGrowl(
+  players: RoomPlayerRecord[],
+  gameState: RoomGameState
+): boolean {
+  const bearTamer = players.find(
+    (p) => p.is_alive && p.role === "montreur-dours"
+  );
+  if (!bearTamer) return false;
+
+  // Un Montreur d'Ours infecté fait grogner son ours chaque matin
+  if (isEffectiveWolf(bearTamer, gameState)) return true;
+
+  const { prev, next } = getAliveNeighbors(players, bearTamer.id);
+  return Boolean(
+    (prev && isEffectiveWolf(prev, gameState)) ||
+      (next && isEffectiveWolf(next, gameState))
+  );
+}
+
+export function findNextAliveWolfAfter(
+  players: RoomPlayerRecord[],
+  knightPlayerId: string,
+  gameState: RoomGameState
+): RoomPlayerRecord | null {
+  if (players.length === 0) return null;
+  const startIdx = players.findIndex((p) => p.id === knightPlayerId);
+  const baseIdx = startIdx >= 0 ? startIdx : 0;
+
+  for (let offset = 1; offset <= players.length; offset++) {
+    const candidate = players[(baseIdx + offset) % players.length];
+    if (
+      candidate.id !== knightPlayerId &&
+      candidate.is_alive &&
+      isEffectiveWolf(candidate, gameState)
+    ) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 /**
- * Vérifie les conditions de victoire de chaque camp.
+ * Calcule le vainqueur éventuel en tenant compte de tous les rôles spéciaux.
  */
 export function evaluateVictory(
   players: RoomPlayerRecord[],
   gameState: RoomGameState,
-  turnNumber: number,
-  justDiedIds: string[]
-): {
-  winnerCamp: RoomGameState["winnerCamp"];
-  winnerTitle: string | null;
-  winnerReason: string | null;
-} {
-  if (turnNumber === 1) {
-    const deadAngel = players.find(
-      (p) => justDiedIds.includes(p.id) && p.role === "ange"
-    );
-    if (deadAngel) {
+  turnNumber = 1,
+  recentlyDeadIds: string[] = []
+): Pick<RoomGameState, "winnerCamp" | "winnerTitle" | "winnerReason"> {
+  if (
+    turnNumber === 1 &&
+    recentlyDeadIds.some((id) => {
+      const dead = players.find((p) => p.id === id);
+      return dead?.role === "ange";
+    })
+  ) {
+    return {
+      winnerCamp: "solitaire",
+      winnerTitle: "Victoire de l'Ange",
+      winnerReason:
+        "L'Ange a accompli sa destinée dès le premier vote et s'élève vers les cieux.",
+    };
+  }
+
+  const alive = players.filter((p) => p.is_alive);
+
+  if (alive.length === 0) {
+    return {
+      winnerCamp: "village",
+      winnerTitle: "Aube Silencieuse",
+      winnerReason:
+        "Aucun survivant ne demeure sous la Lune de Sang, et la meute est anéantie.",
+    };
+  }
+
+  // Victoire des Amoureux
+  if (
+    alive.length === 2 &&
+    gameState.lovers &&
+    gameState.lovers.every((id) => alive.some((a) => a.id === id))
+  ) {
+    return {
+      winnerCamp: "amoureux",
+      winnerTitle: "Victoire des Amoureux",
+      winnerReason:
+        "Seuls les deux amants survivent ensemble sous la Lune de Sang.",
+    };
+  }
+
+  // Victoire du Joueur de Flûte
+  const alivePiper = alive.find((p) => p.role === "joueur-de-flute");
+  if (alivePiper) {
+    const others = alive.filter((p) => p.id !== alivePiper.id);
+    if (
+      others.length > 0 &&
+      others.every((p) => gameState.charmedPlayerIds.includes(p.id))
+    ) {
       return {
         winnerCamp: "solitaire",
-        winnerTitle: `Victoire de l'Ange (${deadAngel.pseudo})`,
+        winnerTitle: "Victoire du Joueur de Flûte",
         winnerReason:
-          "L'Ange a été éliminé dès le tout premier tour et s'envole vers la victoire !",
+          "Tous les survivants du village dansent désormais au son de sa flûte ensorcelée.",
       };
     }
   }
 
-  const alive = players.filter((p) => p.is_alive);
-  const aliveWolves = alive.filter((p) => isWolfRole(p.role));
-  const aliveVillagers = alive.filter((p) => !isWolfRole(p.role));
+  const aliveWolves = alive.filter((p) => isEffectiveWolf(p, gameState));
+  const aliveNonWolves = alive.filter((p) => !isEffectiveWolf(p, gameState));
 
+  // Victoire solitaire du Loup-Garou Blanc
   if (alive.length === 1 && alive[0].role === "loup-garou-blanc") {
     return {
       winnerCamp: "solitaire",
-      winnerTitle: `Victoire du Loup-Garou Blanc (${alive[0].pseudo})`,
+      winnerTitle: "Victoire du Loup-Garou Blanc",
       winnerReason:
-        "Le Loup-Garou Blanc a trahi la meute et dévoré le dernier survivant.",
+        "Le Loup-Garou Blanc a trahi toute la meute et règne seul sur les cendres du village.",
     };
   }
 
-  if (gameState.lovers && alive.length === 2) {
-    const [a, b] = gameState.lovers;
-    const aliveIds = new Set(alive.map((p) => p.id));
-    if (aliveIds.has(a) && aliveIds.has(b)) {
-      const pA = alive.find((p) => p.id === a);
-      const pB = alive.find((p) => p.id === b);
-      const mixed =
-        Boolean(pA && pB) &&
-        isWolfRole(pA?.role) !== isWolfRole(pB?.role);
-      if (mixed) {
-        return {
-          winnerCamp: "amoureux",
-          winnerTitle: "Victoire des Amoureux",
-          winnerReason: `${pA?.pseudo} et ${pB?.pseudo} ont survécu ensemble à la Lune de Sang.`,
-        };
-      }
-    }
-  }
-
-  if (aliveWolves.length === 0 && alive.length > 0) {
+  if (aliveWolves.length === 0) {
     return {
       winnerCamp: "village",
       winnerTitle: "Victoire du Village",
-      winnerReason:
-        "Tous les Loups-Garous ont été démasqués. La paix revient sur le hameau.",
+      winnerReason: "Tous les Loups-Garous ont été démasqués et vaincus !",
     };
   }
 
-  if (aliveWolves.length >= aliveVillagers.length && alive.length > 0) {
+  if (aliveWolves.length >= aliveNonWolves.length) {
+    if (aliveWolves.length === 1 && aliveWolves[0].role === "loup-garou-blanc") {
+      return {
+        winnerCamp: "solitaire",
+        winnerTitle: "Victoire du Loup-Garou Blanc",
+        winnerReason: "Le Loup-Garou Blanc demeure le seul maître de la nuit.",
+      };
+    }
     return {
       winnerCamp: "loup",
       winnerTitle: "Victoire des Loups-Garous",
       winnerReason:
-        "La meute règne désormais sans partage sous la Lune de Sang.",
+        "Les créatures de la nuit égalent ou surpassent les survivants du village.",
     };
   }
 
@@ -338,38 +624,53 @@ export function evaluateVictory(
 }
 
 /**
- * Calcule la cible majoritaire des votes d'un groupe de joueurs.
+ * Calcule la majorité des votes (avec bonus optionnel du Corbeau sur un joueur).
  */
 export function tallyTargetFromVoters(
-  voters: RoomPlayerRecord[]
-): { targetId: string | null; isTie: boolean } {
-  const counts = new Map<string, number>();
+  voters: RoomPlayerRecord[],
+  bonusTargetId?: string | null,
+  bonusCount = 2
+): {
+  targetId: string | null;
+  maxVotes: number;
+  isTie: boolean;
+  counts: Record<string, number>;
+} {
+  const counts: Record<string, number> = {};
+
   for (const voter of voters) {
     if (!voter.target_id) continue;
-    counts.set(voter.target_id, (counts.get(voter.target_id) ?? 0) + 1);
+    counts[voter.target_id] = (counts[voter.target_id] ?? 0) + 1;
   }
 
-  if (counts.size === 0) return { targetId: null, isTie: false };
+  if (bonusTargetId && bonusCount > 0) {
+    counts[bonusTargetId] = (counts[bonusTargetId] ?? 0) + bonusCount;
+  }
 
   let bestId: string | null = null;
-  let bestCount = 0;
-  let tie = false;
+  let maxVotes = 0;
+  let isTie = false;
 
-  for (const [targetId, count] of counts.entries()) {
-    if (count > bestCount) {
-      bestCount = count;
-      bestId = targetId;
-      tie = false;
-    } else if (count === bestCount) {
-      tie = true;
+  for (const [candidateId, count] of Object.entries(counts)) {
+    if (count > maxVotes) {
+      maxVotes = count;
+      bestId = candidateId;
+      isTie = false;
+    } else if (count === maxVotes && count > 0) {
+      isTie = true;
     }
   }
 
-  return { targetId: tie ? null : bestId, isTie: tie };
+  return {
+    targetId: isTie ? null : bestId,
+    maxVotes,
+    isTie,
+    counts,
+  };
 }
 
 /**
- * Applique un ou plusieurs décès initiaux en gérant la chaîne Amoureux + Chasseur.
+ * Applique une liste de morts initiales + effets cascade (Amoureux, Chasseur, Ancien, Chevalier, Enfant Sauvage).
  */
 export function resolveDeathsWithCascade(
   players: RoomPlayerRecord[],
@@ -383,80 +684,141 @@ export function resolveDeathsWithCascade(
   victims: NightVictimEntry[];
   hunterPendingPlayerId: string | null;
   elderShieldTriggered: boolean;
+  elderShieldUsedNext: boolean;
+  rustyKnightPendingWolfIdNext: string | null;
+  wildChildTransformedNow: boolean;
 } {
-  const updatedPlayers = players.map((p) => ({ ...p }));
+  const cloned = players.map((p) => ({ ...p }));
   const victims: NightVictimEntry[] = [];
-  let elderShieldTriggered = gameState.elderShieldUsed;
-
   const queue = [...initialDeaths];
   const processed = new Set<string>();
+  let hunterPendingPlayerId: string | null = null;
+  let elderShieldTriggered = false;
+  let elderShieldUsedNext = gameState.elderShieldUsed;
+  let rustyKnightPendingWolfIdNext: string | null = null;
 
   while (queue.length > 0) {
-    const item = queue.shift();
-    if (!item || processed.has(item.playerId)) continue;
-    const player = updatedPlayers.find((p) => p.id === item.playerId);
-    if (!player || !player.is_alive) continue;
+    const next = queue.shift()!;
+    if (processed.has(next.playerId)) continue;
 
+    const target = cloned.find((p) => p.id === next.playerId);
+    if (!target || !target.is_alive) continue;
+
+    // Bouclier passif de l'Ancien contre une première attaque de Loups
     if (
-      item.cause === "loups" &&
-      player.role === "ancien" &&
-      !elderShieldTriggered
+      target.role === "ancien" &&
+      next.cause === "loups" &&
+      !elderShieldUsedNext
     ) {
       elderShieldTriggered = true;
-      processed.add(item.playerId);
+      elderShieldUsedNext = true;
+      processed.add(target.id);
       continue;
     }
 
-    processed.add(item.playerId);
-    player.is_alive = false;
+    processed.add(target.id);
+    target.is_alive = false;
     victims.push({
-      playerId: player.id,
-      pseudo: player.pseudo,
-      roleId: player.role,
-      cause: item.cause,
+      playerId: target.id,
+      pseudo: target.pseudo,
+      roleId: target.role,
+      cause: next.cause,
     });
 
-    if (gameState.lovers) {
-      const [a, b] = gameState.lovers;
-      const partnerId = a === player.id ? b : b === player.id ? a : null;
+    // Chevalier à l'Épée Rouillée : empoisonne le loup suivant s'il meurt sous les crocs
+    if (
+      target.role === "chevalier-epee-rouillee" &&
+      next.cause === "loups" &&
+      !rustyKnightPendingWolfIdNext
+    ) {
+      const nextWolf = findNextAliveWolfAfter(
+        cloned,
+        target.id,
+        gameState
+      );
+      if (nextWolf) {
+        rustyKnightPendingWolfIdNext = nextWolf.id;
+      }
+    }
+
+    // Chagrin des Amoureux
+    if (gameState.lovers && gameState.lovers.includes(target.id)) {
+      const partnerId = gameState.lovers.find((id) => id !== target.id);
       if (partnerId && !processed.has(partnerId)) {
         queue.push({ playerId: partnerId, cause: "chagrin" });
       }
     }
+
+    if (target.role === "chasseur") {
+      hunterPendingPlayerId = target.id;
+    }
   }
 
-  const deadHunter = victims.find((v) => v.roleId === "chasseur");
+  // Enfant Sauvage : se transforme en Loup-Garou si son modèle vient de mourir
+  const wildChildPlayer = cloned.find(
+    (p) => p.is_alive && p.role === "enfant-sauvage"
+  );
+  const wildChildTransformedNow = Boolean(
+    wildChildPlayer &&
+      !gameState.wildChildTransformed &&
+      gameState.wildChildModelId &&
+      victims.some((v) => v.playerId === gameState.wildChildModelId)
+  );
 
   return {
-    updatedPlayers,
+    updatedPlayers: cloned,
     victims,
-    hunterPendingPlayerId: deadHunter ? deadHunter.playerId : null,
+    hunterPendingPlayerId,
     elderShieldTriggered,
+    elderShieldUsedNext,
+    rustyKnightPendingWolfIdNext,
+    wildChildTransformedNow,
   };
 }
 
-export function getPhaseLabel(phase: GamePhase): string {
+export function getPhaseLabel(
+  phase: GamePhase,
+  nightStep?: NightStepId | null
+): string {
+  if (phase.startsWith("NIGHT_") && nightStep) {
+    const stepLabels: Record<Exclude<NightStepId, null>, string> = {
+      cupidon: "Nuit • Cupidon",
+      "enfant-sauvage": "Nuit • Enfant Sauvage",
+      fratrie: "Nuit • Sœurs & Frères",
+      salvateur: "Nuit • Le Salvateur",
+      voyante: "Nuit • La Voyante",
+      renard: "Nuit • Le Renard",
+      loups: "Nuit • Les Loups-Garous",
+      "loup-blanc": "Nuit • Loup-Garou Blanc",
+      "grand-mechant-loup": "Nuit • Grand Méchant Loup",
+      sorciere: "Nuit • La Sorcière",
+      corbeau: "Nuit • Le Corbeau",
+      "joueur-de-flute": "Nuit • Joueur de Flûte",
+    };
+    return stepLabels[nightStep];
+  }
+
   switch (phase) {
     case "LOBBY":
       return "Salon d'attente";
     case "ROLE_REVEAL":
       return "Découverte des Rôles";
     case "NIGHT_CUPIDON":
-      return "Nuit — Cupidon";
+      return "Nuit • Éveil des Destins";
     case "NIGHT_SEER":
-      return "Nuit — Voyante";
+      return "Nuit • Éclaireurs";
     case "NIGHT_WEREWOLVES":
-      return "Nuit — Loups-Garous";
+      return "Nuit • Les Loups-Garous";
     case "NIGHT_WITCH":
-      return "Nuit — Sorcière";
+      return "Nuit • Ombres & Potions";
     case "DAY_ANNOUNCEMENT":
-      return "Aube — Annonce";
+      return "Aube sur le Village";
     case "DAY_VOTE":
-      return "Jour — Vote du Village";
+      return "Conseil & Vote du Jour";
     case "HUNTER_SHOT":
-      return "Dernier Tir du Chasseur";
+      return "Tir du Chasseur";
     case "VICTORY":
-      return "Fin de la Partie";
+      return "Fin de Partie";
   }
 }
 
@@ -465,144 +827,188 @@ export function getHumanNarratorScript(
   players: RoomPlayerRecord[],
   gameState: RoomGameState,
   turnNumber: number
-): {
-  headline: string;
-  script: string;
-  actionHint: string;
-} {
-  const aliveRoleNames = players
-    .filter((p) => p.is_alive && p.role)
-    .map((p) => ROLE_BY_ID[p.role!]?.name ?? p.role)
-    .filter((v, i, a) => a.indexOf(v) === i);
+): string {
+  const step = gameState.nightStep;
+  const corbeauTarget = gameState.corbeauTargetId
+    ? players.find((p) => p.id === gameState.corbeauTargetId)
+    : null;
 
   switch (phase) {
     case "ROLE_REVEAL":
-      return {
-        headline: "Distribution secrète",
-        script:
-          "« Chacun maintient son doigt sur sa carte secrète pour découvrir son identité. Ne laissez personne voir votre écran ! »",
-        actionHint: `Rôles en jeu : ${aliveRoleNames.join(", ")}.`,
-      };
+      return "Demandez à chacun de regarder discrètement son rôle (appui long sur sa carte) puis d'appuyer sur Prêt. Lorsque tout le monde est prêt, lancez la première nuit.";
     case "NIGHT_CUPIDON":
-      return {
-        headline: "Appel de Cupidon (Nuit 1)",
-        script:
-          "« Le village s'endort... Cupidon se réveille et désigne deux joueurs sur son téléphone qui seront liés par l'amour jusqu'à la fin. »",
-        actionHint:
-          gameState.cupidonTargets.length === 2
-            ? "Cupidon a lié deux amoureux. Vous pouvez passer à l'étape suivante."
-            : "En attente du choix de Cupidon.",
-      };
+      if (step === "enfant-sauvage") {
+        return "Villageois, gardez les yeux clos. L'Enfant Sauvage choisit secrètement son modèle.";
+      }
+      if (step === "fratrie") {
+        return "Les Deux Sœurs ou Trois Frères se reconnaissent en silence, puis referment les yeux.";
+      }
+      return `Nuit ${turnNumber} : Tout le village ferme les yeux. Cupidon se réveille, désigne deux amoureux et se rendort.`;
     case "NIGHT_SEER":
-      return {
-        headline: "Appel de la Voyante",
-        script:
-          "« Cupidon se rendort. La Voyante ouvre les yeux et choisit un joueur sur son écran pour percer sa véritable nature. »",
-        actionHint: gameState.seerInspectedId
-          ? "La Voyante a consulté sa vision. Vous pouvez continuer."
-          : "En attente de la Voyante.",
-      };
-    case "NIGHT_WEREWOLVES": {
-      const wolvesCount = players.filter(
-        (p) => p.is_alive && isWolfRole(p.role)
-      ).length;
-      const wolvesVoted = players.filter(
-        (p) => p.is_alive && isWolfRole(p.role) && p.has_voted
-      ).length;
-      return {
-        headline: `Appel des Loups-Garous (Nuit ${turnNumber})`,
-        script:
-          "« La Voyante ferme les yeux. Les Loups-Garous se réveillent en silence, se reconnaissent et votent ensemble sur leur téléphone pour dévorer une victime. »",
-        actionHint: `${wolvesVoted}/${wolvesCount} loup(s) ont voté.`,
-      };
-    }
+      if (step === "salvateur") {
+        return "Le Salvateur ouvre les yeux, désigne le joueur qu'il protège cette nuit, puis referme les yeux.";
+      }
+      if (step === "renard") {
+        return "Le Renard se réveille et désigne un groupe de trois voisins à flairer.";
+      }
+      return "La Voyante se réveille, observe secrètement l'identité d'un joueur, puis se rendort.";
+    case "NIGHT_WEREWOLVES":
+      if (step === "loup-blanc") {
+        return "La meute s'endort. Le Loup-Garou Blanc rouvre les yeux et choisit s'il élimine un autre loup cette nuit.";
+      }
+      if (step === "grand-mechant-loup") {
+        return "Le Grand Méchant Loup reste éveillé seul et dévore une seconde victime.";
+      }
+      return "Les Loups-Garous ouvrent les yeux, se concertent en silence pour désigner une proie, puis se rendorment.";
     case "NIGHT_WITCH":
-      return {
-        headline: "Appel de la Sorcière",
-        script:
-          "« Les Loups-Garous se rendorment. La Sorcière se réveille, observe la victime de la nuit et choisit d'utiliser ou non sa potion de vie ou de mort. »",
-        actionHint: `Potions restantes — Vie : ${
-          gameState.witchLifeUsed ? "utilisée" : "dispo"
-        } • Mort : ${gameState.witchDeathUsed ? "utilisée" : "dispo"}.`,
-      };
-    case "DAY_ANNOUNCEMENT":
-      return {
-        headline: `Réveil du Village (Jour ${turnNumber})`,
-        script: `« Le jour se lève sur le village ! Tout le monde ouvre les yeux. ${
-          gameState.lastAnnouncement || "Découvrons ce qu'il s'est passé cette nuit."
-        } »`,
-        actionHint: "Laissez le village réagir puis lancez le débat et le vote.",
-      };
-    case "DAY_VOTE": {
-      const aliveCount = players.filter((p) => p.is_alive).length;
-      const votedCount = players.filter(
-        (p) => p.is_alive && p.has_voted
-      ).length;
-      return {
-        headline: "Débat & Vote du Village",
-        script:
-          "« Débattez entre vous pour démasquer les loups, puis votez directement sur votre téléphone contre le joueur que vous souhaitez éliminer. »",
-        actionHint: `${votedCount}/${aliveCount} villageois vivants ont voté.`,
-      };
+      if (step === "corbeau") {
+        return "Le Corbeau désigne la personne qui recevra deux voix supplémentaires contre elle au lever du jour.";
+      }
+      if (step === "joueur-de-flute") {
+        return "Le Joueur de Flûte charme jusqu'à deux habitants silencieux, puis se rendort.";
+      }
+      return "La Sorcière se réveille. Indiquez-lui la cible nocturne afin qu'elle décide d'utiliser ou non sa potion de vie ou de mort.";
+    case "DAY_ANNOUNCEMENT": {
+      const names = gameState.nightVictims.map((v) => v.pseudo);
+      const extras: string[] = [];
+      if (gameState.bearGrowledTonight) {
+        extras.push("L'ours du Montreur grogne sourdement ce matin !");
+      }
+      if (corbeauTarget) {
+        extras.push(
+          `Une marque du Corbeau pèse sur ${corbeauTarget.pseudo} (+2 voix).`
+        );
+      }
+      if (names.length === 0) {
+        return `Le village se réveille ! Annoncez à voix haute : aucune victime n'est tombée cette nuit.${extras.length ? " " + extras.join(" ") : ""}`;
+      }
+      return `Le village se réveille. Annoncez tristement l'élimination de : ${names.join(", ")}.${extras.length ? " " + extras.join(" ") : ""}`;
     }
+    case "DAY_VOTE":
+      return corbeauTarget
+        ? `Lancez les débats ! Rappelez que ${corbeauTarget.pseudo} subit la malédiction du Corbeau (+2 voix) et demandez à chacun de voter.`
+        : "Lancez les débats ! Laissez les survivants argumenter, puis invitez chaque joueur vivant à voter sur son téléphone.";
     case "HUNTER_SHOT": {
       const hunter = players.find(
         (p) => p.id === gameState.hunterPendingPlayerId
       );
-      return {
-        headline: "Dernier souffle du Chasseur",
-        script: `« ${
-          hunter?.pseudo ?? "Le Chasseur"
-        } est tombé, mais dans son dernier souffle il emporte quelqu'un avec lui ! Qu'il désigne sa cible sur son écran. »`,
-        actionHint: "En attente du tir du Chasseur.",
-      };
+      return `Le Chasseur (${hunter?.pseudo ?? "inconnu"}) est tombé ! Il doit immédiatement désigner sa dernière cible.`;
     }
     case "VICTORY":
-      return {
-        headline: gameState.winnerTitle ?? "Fin de la partie",
-        script: `« ${
-          gameState.winnerReason ?? "La partie est terminée !"
-        } Félicitations aux survivants ! »`,
-        actionHint: "Vous pouvez relancer une nouvelle partie depuis le salon.",
-      };
-    case "LOBBY":
+      return `${gameState.winnerTitle ?? "Fin de partie"} — ${gameState.winnerReason ?? ""}`;
     default:
-      return {
-        headline: "Préparation du salon",
-        script: "En attente des joueurs avant de lancer la partie.",
-        actionHint: "",
-      };
+      return "Préparez la partie dans le salon.";
   }
 }
 
 export function getAutoNarratorSpeech(
   phase: GamePhase,
   gameState: RoomGameState,
-  turnNumber: number
+  turnNumber: number,
+  players: RoomPlayerRecord[] = []
 ): string {
+  const step = gameState.nightStep;
+  const corbeauTarget = gameState.corbeauTargetId
+    ? players.find((p) => p.id === gameState.corbeauTargetId)
+    : null;
+
   switch (phase) {
     case "ROLE_REVEAL":
-      return "La partie commence. Maintenez votre doigt sur votre carte pour découvrir votre rôle en secret.";
+      return "Le village s'installe sous la lune. Maintenez votre carte pour mémoriser votre rôle secret.";
     case "NIGHT_CUPIDON":
-      return "La nuit tombe sur le village. Cupidon se réveille et choisit deux amoureux.";
+      if (step === "enfant-sauvage") {
+        return "Cupidon s'endort. L'Enfant Sauvage se réveille et choisit son modèle.";
+      }
+      if (step === "fratrie") {
+        return "Les Deux Sœurs et les Trois Frères ouvrent les yeux un instant pour se reconnaître en silence.";
+      }
+      return "La nuit tombe sur le village. Tout le monde ferme les yeux. Cupidon se réveille et unit deux amoureux.";
     case "NIGHT_SEER":
-      return "La Voyante ouvre les yeux et choisit un joueur pour connaître son secret.";
+      if (step === "salvateur") {
+        return `La nuit ${turnNumber} enveloppe le hameau. Le Salvateur s'éveille et protège un habitant de son bouclier.`;
+      }
+      if (step === "renard") {
+        return "Le Renard se faufile dans la brume pour flairer la trace des loups.";
+      }
+      return `La nuit ${turnNumber} s'étend sur le village. La Voyante ouvre les yeux et sonde l'âme d'un joueur.`;
     case "NIGHT_WEREWOLVES":
-      return `Nuit ${turnNumber}. Les Loups-Garous se réveillent et désignent leur victime.`;
+      if (step === "loup-blanc") {
+        return "La meute s'endort. Seul le Loup-Garou Blanc rouvre les yeux et décide s'il frappe l'un des siens.";
+      }
+      if (step === "grand-mechant-loup") {
+        return "Les loups s'endorment, mais le Grand Méchant Loup se réveille encore affamé pour chasser une deuxième proie.";
+      }
+      return "La nuit est profonde. Les Loups-Garous se réveillent et désignent leur proie en silence.";
     case "NIGHT_WITCH":
-      return "Les loups se rendorment. La Sorcière se réveille et observe la victime de la nuit.";
-    case "DAY_ANNOUNCEMENT":
-      return `Le jour se lève sur le village. ${
-        gameState.lastAnnouncement || "Tout le monde ouvre les yeux."
-      }`;
+      if (step === "corbeau") {
+        return "Le Corbeau s'envole dans la nuit et dépose sa malédiction sur un habitant.";
+      }
+      if (step === "joueur-de-flute") {
+        return "Le Joueur de Flûte entonne une douce mélodie et ensorcelle deux nouveaux esprits.";
+      }
+      return "Les loups se rendorment. La Sorcière s'éveille devant ses deux potions.";
+    case "DAY_ANNOUNCEMENT": {
+      const victims = gameState.nightVictims;
+      const parts: string[] = [];
+
+      if (victims.length === 0) {
+        if (gameState.elderShieldTriggeredTonight) {
+          parts.push(
+            "Le jour se lève. Une force ancienne a repoussé l'attaque nocturne : aucune victime au village."
+          );
+        } else if (
+          gameState.salvateurSavedTonight ||
+          gameState.witchSaveTonight
+        ) {
+          parts.push(
+            "L'aube éclaire le village. Grâce à une protection salutaire durant la nuit, personne n'a péri !"
+          );
+        } else if (gameState.infectTonight) {
+          parts.push(
+            "Le soleil se lève sur un village silencieux. Aucun corps n'est retrouvé ce matin, mais le danger rôde dans l'ombre."
+          );
+        } else {
+          parts.push(
+            "Le jour se lève paisiblement sur le village : tout le monde a survécu à la nuit."
+          );
+        }
+      } else if (victims.length === 1) {
+        if (victims[0].cause === "tetanos") {
+          parts.push(
+            `Le village découvre avec stupeur que ${victims[0].pseudo} vient de succomber à une blessure empoisonnée de la nuit précédente.`
+          );
+        } else {
+          parts.push(
+            `Le village découvre avec effroi que ${victims[0].pseudo} ne s'est pas réveillé cette nuit.`
+          );
+        }
+      } else {
+        const names = victims.map((v) => v.pseudo).join(" et ");
+        parts.push(
+          `Terrible matinée au village : ${names} ont péri durant la nuit.`
+        );
+      }
+
+      if (gameState.bearGrowledTonight) {
+        parts.push("Attention, l'ours du montreur grogne sourdement au réveil !");
+      }
+
+      if (corbeauTarget) {
+        parts.push(
+          `Une plume noire marque la porte de ${corbeauTarget.pseudo}, qui subit déjà deux voix contre lui.`
+        );
+      }
+
+      return parts.join(" ");
+    }
     case "DAY_VOTE":
-      return "Le débat est ouvert. Votez sur votre téléphone pour éliminer un suspect.";
+      return corbeauTarget
+        ? `Le conseil du village est ouvert. Rappelons que ${corbeauTarget.pseudo} porte la malédiction du Corbeau. Débattez avec prudence et votez.`
+        : "Le conseil du village est ouvert. Débattez avec prudence et désignez un suspect.";
     case "HUNTER_SHOT":
-      return "Le Chasseur est éliminé ! Il doit immédiatement désigner sa dernière cible.";
+      return "Dans son dernier souffle, le Chasseur arme son fusil et désigne sa dernière cible.";
     case "VICTORY":
-      return `${gameState.winnerTitle ?? "Fin de la partie."} ${
-        gameState.winnerReason ?? ""
-      }`;
+      return `${gameState.winnerTitle ?? "La partie est terminée."}. ${gameState.winnerReason ?? ""}`;
     default:
       return "";
   }

@@ -2,19 +2,26 @@
 
 import { motion, type TargetAndTransition } from "framer-motion";
 import {
+  Biohazard,
+  Bird,
   Crosshair,
+  Crown,
+  Dog,
   Eye,
   Feather,
   Flame,
   FlaskConical,
   Heart,
   Moon,
+  Music,
   PawPrint,
   ScrollText,
   Shield,
   Smile,
   Sparkles,
+  Sword,
   User,
+  Users,
 } from "lucide-react";
 import type { RoleIconName } from "@/types/game";
 
@@ -47,6 +54,7 @@ function getIconAnimation(icon: RoleIconName): {
       };
     case "sparkles":
     case "feather":
+    case "bird":
       return {
         animate: {
           y: [0, -2, 0],
@@ -54,6 +62,32 @@ function getIconAnimation(icon: RoleIconName): {
           opacity: [0.85, 1, 0.85],
         },
         duration: 3.2,
+      };
+    case "music":
+      return {
+        animate: {
+          y: [0, -2.5, 0],
+          rotate: [-5, 6, -5],
+          scale: [1, 1.07, 1],
+        },
+        duration: 2.5,
+      };
+    case "sword":
+      return {
+        animate: {
+          rotate: [-4, 4, -4],
+          scale: [1, 1.06, 1],
+        },
+        duration: 3.1,
+      };
+    case "biohazard":
+      return {
+        animate: {
+          rotate: [0, 12, -12, 0],
+          scale: [1, 1.08, 1],
+          opacity: [0.85, 1, 0.85],
+        },
+        duration: 3.5,
       };
     case "heart":
       return {
@@ -90,6 +124,8 @@ function renderGlyph(
     case "moon":
       return <Moon {...props} />;
     case "wolf":
+    case "paw":
+    case "pawprint":
       return <PawPrint {...props} />;
     case "flame":
       return <Flame {...props} />;
@@ -109,10 +145,22 @@ function renderGlyph(
       return <ScrollText {...props} />;
     case "smile":
       return <Smile {...props} />;
-    case "paw":
-      return <PawPrint {...props} />;
     case "feather":
       return <Feather {...props} />;
+    case "bird":
+      return <Bird {...props} />;
+    case "dog":
+      return <Dog {...props} />;
+    case "crown":
+      return <Crown {...props} />;
+    case "music":
+      return <Music {...props} />;
+    case "biohazard":
+      return <Biohazard {...props} />;
+    case "sword":
+      return <Sword {...props} />;
+    case "users":
+      return <Users {...props} />;
     case "user":
     default:
       return <User {...props} />;

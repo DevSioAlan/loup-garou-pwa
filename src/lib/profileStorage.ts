@@ -5,61 +5,100 @@ const STORAGE_KEY = "lune_de_sang_profile_v1";
 const PROFILE_EVENT = "lune-de-sang-profile-change";
 
 export const OWNER_SECRET_CODE = "alucard";
-export const MAX_GIF_BYTES = 1.5 * 1024 * 1024; // 1,5 Mo
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4 Mo
+export const MAX_GIF_BYTES = MAX_UPLOAD_BYTES;
+const MAX_VIDEO_SECONDS = 15;
 
 export const AVATAR_PRESETS: Array<{
   id: AvatarPresetId;
   label: string;
   accent: string;
+  secondary: string;
   bgGradient: string;
 }> = [
   {
     id: "wolf",
     label: "Loup",
     accent: "#FB7185",
+    secondary: "#9B1B30",
     bgGradient: "from-rose-900/80 via-[#240B16] to-[#090A0F]",
   },
   {
     id: "moon",
     label: "Lune",
     accent: "#FCD34D",
+    secondary: "#E11D48",
     bgGradient: "from-amber-900/70 via-[#22170D] to-[#090A0F]",
   },
   {
     id: "eye",
     label: "Oracle",
     accent: "#C084FC",
+    secondary: "#6366F1",
     bgGradient: "from-purple-900/80 via-[#1B1030] to-[#090A0F]",
   },
   {
     id: "flask",
     label: "Alchimie",
     accent: "#34D399",
+    secondary: "#8B5CF6",
     bgGradient: "from-emerald-900/75 via-[#0B201E] to-[#090A0F]",
   },
   {
     id: "shield",
     label: "Garde",
     accent: "#38BDF8",
+    secondary: "#1D4ED8",
     bgGradient: "from-sky-900/75 via-[#0D1A2B] to-[#090A0F]",
   },
   {
     id: "flame",
     label: "Braise",
     accent: "#FB923C",
+    secondary: "#DC2626",
     bgGradient: "from-orange-900/75 via-[#24120B] to-[#090A0F]",
   },
   {
     id: "crown",
     label: "Noble",
     accent: "#FBBF24",
+    secondary: "#9333EA",
     bgGradient: "from-yellow-900/70 via-[#241B0A] to-[#090A0F]",
   },
   {
     id: "sparkles",
     label: "Astral",
     accent: "#818CF8",
+    secondary: "#EC4899",
     bgGradient: "from-indigo-900/75 via-[#13142C] to-[#090A0F]",
+  },
+  {
+    id: "bird",
+    label: "Corbeau",
+    accent: "#A5B4FC",
+    secondary: "#312E81",
+    bgGradient: "from-indigo-950/85 via-[#141328] to-[#090A0F]",
+  },
+  {
+    id: "fox",
+    label: "Renard",
+    accent: "#FB923C",
+    secondary: "#F59E0B",
+    bgGradient: "from-orange-950/80 via-[#28140C] to-[#090A0F]",
+  },
+  {
+    id: "music",
+    label: "Flûte",
+    accent: "#22D3EE",
+    secondary: "#A855F7",
+    bgGradient: "from-cyan-950/80 via-[#0E1B29] to-[#090A0F]",
+  },
+  {
+    id: "sword",
+    label: "Chevalier",
+    accent: "#F59E0B",
+    secondary: "#B45309",
+    bgGradient: "from-amber-950/80 via-[#24190C] to-[#090A0F]",
   },
 ];
 
@@ -176,28 +215,79 @@ export function verifyOwnerSecretCode(input: string): boolean {
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Lecture de l'image impossible."));
+    reader.onerror = () => reject(new Error("Lecture du fichier impossible."));
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
 }
 
+function checkVideoDuration(file: File): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.removeAttribute("src");
+    };
+    video.onloadedmetadata = () => {
+      const dur = video.duration;
+      cleanup();
+      if (Number.isFinite(dur) && dur > MAX_VIDEO_SECONDS) {
+        reject(
+          new Error(
+            `Vidéo trop longue (${Math.round(dur)}s) : choisissez une boucle courte de ${MAX_VIDEO_SECONDS}s maximum.`
+          )
+        );
+        return;
+      }
+      resolve();
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("Format vidéo non lisible par ce navigateur."));
+    };
+    video.src = url;
+  });
+}
+
 /**
- * Traite un avatar importé depuis le téléphone :
- * - Les fichiers .gif animés sont conservés intacts en Data URL (max 1,5 Mo) sans passer par <canvas>.
- * - Les autres images (JPEG/PNG/WebP) sont recadrées et compressées en 160x160 JPEG.
+ * Traite un avatar importé depuis l'appareil (jusqu'à 4 Mo) :
+ * - .gif animés conservés intacts en Data URL sans passer par <canvas>
+ * - Boucles vidéo courtes .mp4 / .webm (<= 4 Mo, <= 15s) conservées en Data URL
+ * - Images statiques (JPEG/PNG/WebP...) recadrées en carré 192x192 et compressées
+ *   intelligemment en WebP (avec repli JPEG si WebP indisponible).
  */
 export async function processAvatarFile(file: File): Promise<string> {
-  const isGif =
-    file.type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
+  if (file.size > MAX_UPLOAD_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+    throw new Error(
+      `Ce fichier fait ${sizeMb} Mo : la limite maximale est de 4 Mo.`
+    );
+  }
+
+  const lowerName = file.name.toLowerCase();
+  const isGif = file.type === "image/gif" || lowerName.endsWith(".gif");
+  const isVideo =
+    file.type.startsWith("video/") ||
+    lowerName.endsWith(".mp4") ||
+    lowerName.endsWith(".webm");
 
   if (isGif) {
-    if (file.size > MAX_GIF_BYTES) {
-      const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
-      throw new Error(
-        `Ce GIF fait ${sizeMb} Mo : la limite est de 1,5 Mo pour préserver le stockage local.`
-      );
+    return readFileAsDataUrl(file);
+  }
+
+  if (isVideo) {
+    const supportedVideo =
+      file.type === "video/mp4" ||
+      file.type === "video/webm" ||
+      lowerName.endsWith(".mp4") ||
+      lowerName.endsWith(".webm");
+    if (!supportedVideo) {
+      throw new Error("Formats vidéo acceptés : .mp4 ou .webm uniquement.");
     }
+    await checkVideoDuration(file);
     return readFileAsDataUrl(file);
   }
 
@@ -206,7 +296,7 @@ export async function processAvatarFile(file: File): Promise<string> {
     const img = new Image();
     img.onerror = () => reject(new Error("Format d'image non supporté."));
     img.onload = () => {
-      const size = 160;
+      const size = 192;
       const canvas = document.createElement("canvas");
       canvas.width = size;
       canvas.height = size;
@@ -220,8 +310,16 @@ export async function processAvatarFile(file: File): Promise<string> {
       const sx = (img.width - minSide) / 2;
       const sy = (img.height - minSide) / 2;
 
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
-      resolve(canvas.toDataURL("image/jpeg", 0.82));
+
+      const webpUrl = canvas.toDataURL("image/webp", 0.84);
+      if (webpUrl.startsWith("data:image/webp")) {
+        resolve(webpUrl);
+        return;
+      }
+      resolve(canvas.toDataURL("image/jpeg", 0.84));
     };
     img.src = rawDataUrl;
   });

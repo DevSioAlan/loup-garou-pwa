@@ -14,6 +14,7 @@ import {
   playPhaseSoundEffect,
   speakFrenchNarration,
   stopFrenchNarration,
+  unlockAudioPlayback,
 } from "@/lib/audioNarrator";
 import { ensurePlayerIdentity } from "@/lib/playerIdentity";
 import { usePlayerProfile } from "@/lib/profileStorage";
@@ -21,7 +22,7 @@ import {
   advanceRoomPhase,
   fetchRoomSnapshot,
   getAutoNarratorSpeech,
-  isWolfRole,
+  isEffectiveWolf,
   joinRoomInSupabase,
 } from "@/lib/roomService";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -37,19 +38,21 @@ interface RoomPageProps {
 
 function RoomSuspenseFallback() {
   return (
-    <div className="glass-panel flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl p-8 text-center">
-      <Loader2 className="h-8 w-8 animate-spin text-amber-300" />
-      <p className="font-display text-sm font-semibold tracking-wider text-amber-100">
-        Ouverture du salon sous la Lune de Sang...
-      </p>
-    </div>
+    <>
+      <BloodMoonBackdrop theme="night" />
+      <div className="glass-panel flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl p-8 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-300" />
+        <p className="font-display text-sm font-semibold tracking-wider text-amber-100">
+          Ouverture du salon sous la Lune de Sang...
+        </p>
+      </div>
+    </>
   );
 }
 
 export default function RoomPage({ params }: RoomPageProps) {
   return (
-    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-clip px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
-      <BloodMoonBackdrop />
+    <main className="relative isolate mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-clip px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
       <Suspense fallback={<RoomSuspenseFallback />}>
         <RoomContent params={params} />
       </Suspense>
@@ -167,15 +170,43 @@ function RoomContent({ params }: RoomPageProps) {
     };
   }, [room?.id, refreshSnapshot]);
 
-  // 3. Narrateur Automatique : synthèse vocale FR + effets sonores au changement de phase
+  const isDayAtmosphere = Boolean(
+    room &&
+      (room.phase === "DAY_ANNOUNCEMENT" ||
+        room.phase === "DAY_VOTE" ||
+        room.phase === "VICTORY")
+  );
+
+  // Débloque la lecture audio navigateur dès la première interaction utilisateur
+  useEffect(() => {
+    const handleUnlock = () => unlockAudioPlayback();
+    window.addEventListener("pointerdown", handleUnlock, { once: true });
+    window.addEventListener("keydown", handleUnlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", handleUnlock);
+      window.removeEventListener("keydown", handleUnlock);
+    };
+  }, []);
+
+  // Synchronise le thème atmosphérique Jour/Nuit sur le document (verre ambré vs verre nuit)
+  useEffect(() => {
+    document.documentElement.dataset.atmosphere = isDayAtmosphere
+      ? "day"
+      : "night";
+    return () => {
+      delete document.documentElement.dataset.atmosphere;
+    };
+  }, [isDayAtmosphere]);
+
+  // 3. Narrateur Automatique : synthèse vocale féminine naturelle + effets sonores au changement de phase/étape
   useEffect(() => {
     if (!room || room.narrator_mode !== "auto" || room.phase === "LOBBY") {
       return;
     }
 
-    const key = `${room.phase}-${room.turn_number}`;
-    if (lastSpokenKeyRef.current === key) return;
-    lastSpokenKeyRef.current = key;
+    const stepKey = `${room.phase}-${room.game_state.nightStep ?? "main"}-${room.turn_number}`;
+    if (lastSpokenKeyRef.current === stepKey) return;
+    lastSpokenKeyRef.current = stepKey;
 
     if (!soundEnabled) return;
 
@@ -183,12 +214,13 @@ function RoomContent({ params }: RoomPageProps) {
     const speech = getAutoNarratorSpeech(
       room.phase,
       room.game_state,
-      room.turn_number
+      room.turn_number,
+      players
     );
     if (speech) {
       speakFrenchNarration(speech);
     }
-  }, [room, soundEnabled]);
+  }, [room, players, soundEnabled]);
 
   // 4. Pilotage automatique des minuteurs & complétion anticipée par l'hôte en Mode Auto
   const isHost = Boolean(room && userId && room.host_user_id === userId);
@@ -206,34 +238,79 @@ function RoomContent({ params }: RoomPageProps) {
     const checkAutoAdvance = async () => {
       if (autoAdvancingRef.current) return;
 
+      const gs = room.game_state;
+      const step = gs.nightStep;
       const deadlinePassed =
-        room.game_state.phaseDeadline &&
-        Date.now() >= new Date(room.game_state.phaseDeadline).getTime();
+        gs.phaseDeadline && Date.now() >= new Date(gs.phaseDeadline).getTime();
 
       let actionComplete = false;
-      if (
-        room.phase === "NIGHT_CUPIDON" &&
-        room.game_state.cupidonTargets.length === 2
-      ) {
-        actionComplete = true;
-      } else if (
-        room.phase === "NIGHT_SEER" &&
-        Boolean(room.game_state.seerInspectedId)
-      ) {
-        actionComplete = true;
-      } else if (room.phase === "NIGHT_WEREWOLVES") {
-        const aliveWolves = players.filter(
-          (p) => p.is_alive && isWolfRole(p.role)
-        );
-        if (
-          aliveWolves.length > 0 &&
-          aliveWolves.every((w) => w.has_voted)
-        ) {
+      if (room.phase === "ROLE_REVEAL") {
+        const aliveCount = players.filter((p) => p.is_alive).length;
+        if (aliveCount > 0 && gs.readyUserIds.length >= aliveCount) {
           actionComplete = true;
         }
+      } else if (room.phase.startsWith("NIGHT_")) {
+        if (step === "cupidon" || (!step && room.phase === "NIGHT_CUPIDON")) {
+          actionComplete = gs.cupidonTargets.length === 2;
+        } else if (step === "enfant-sauvage") {
+          actionComplete = Boolean(gs.wildChildModelId);
+        } else if (step === "fratrie") {
+          const siblings = players.filter(
+            (p) => p.is_alive && (p.role === "soeurs" || p.role === "freres")
+          );
+          actionComplete =
+            siblings.length > 0 &&
+            siblings.every((s) => gs.readyUserIds.includes(s.user_id));
+        } else if (step === "salvateur") {
+          actionComplete = Boolean(gs.salvateurTargetId);
+        } else if (step === "voyante" || (!step && room.phase === "NIGHT_SEER")) {
+          actionComplete = Boolean(gs.seerInspectedId);
+        } else if (step === "renard") {
+          actionComplete = Boolean(gs.foxCheckedTonight);
+        } else if (
+          step === "loups" ||
+          (!step && room.phase === "NIGHT_WEREWOLVES")
+        ) {
+          const aliveWolves = players.filter(
+            (p) => p.is_alive && isEffectiveWolf(p, gs)
+          );
+          actionComplete =
+            aliveWolves.length > 0 && aliveWolves.every((w) => w.has_voted);
+        } else if (step === "loup-blanc") {
+          const whiteWolf = players.find(
+            (p) => p.is_alive && p.role === "loup-garou-blanc"
+          );
+          actionComplete = Boolean(
+            gs.loupBlancTargetId ||
+              (whiteWolf && gs.readyUserIds.includes(whiteWolf.user_id))
+          );
+        } else if (step === "grand-mechant-loup") {
+          const bigWolf = players.find(
+            (p) => p.is_alive && p.role === "grand-mechant-loup"
+          );
+          actionComplete = Boolean(
+            gs.grandMechantSecondTargetId ||
+              (bigWolf && gs.readyUserIds.includes(bigWolf.user_id))
+          );
+        } else if (step === "sorciere" || (!step && room.phase === "NIGHT_WITCH")) {
+          const witch = players.find(
+            (p) => p.is_alive && p.role === "sorciere"
+          );
+          actionComplete = Boolean(
+            gs.witchSaveTonight ||
+              gs.witchKillTargetId ||
+              (witch && gs.readyUserIds.includes(witch.user_id))
+          );
+        } else if (step === "corbeau") {
+          actionComplete = Boolean(gs.corbeauTargetId);
+        } else if (step === "joueur-de-flute") {
+          actionComplete = gs.piperTargetsTonight.length > 0;
+        }
       } else if (room.phase === "DAY_VOTE") {
-        const alive = players.filter((p) => p.is_alive);
-        if (alive.length > 0 && alive.every((p) => p.has_voted)) {
+        const eligible = players.filter(
+          (p) => p.is_alive && !gs.idiotSparedPlayerIds.includes(p.id)
+        );
+        if (eligible.length > 0 && eligible.every((p) => p.has_voted)) {
           actionComplete = true;
         }
       }
@@ -242,7 +319,7 @@ function RoomContent({ params }: RoomPageProps) {
         autoAdvancingRef.current = true;
         try {
           if (actionComplete && !deadlinePassed) {
-            await new Promise((r) => setTimeout(r, 1800));
+            await new Promise((r) => setTimeout(r, 1500));
           }
           await advanceRoomPhase(room, players);
           await refreshSnapshot();
@@ -264,6 +341,8 @@ function RoomContent({ params }: RoomPageProps) {
 
   return (
     <>
+      <BloodMoonBackdrop theme={isDayAtmosphere ? "day" : "night"} />
+
       {/* Barre supérieure du salon */}
       <header className="flex items-center justify-between gap-2">
         <Link
@@ -288,6 +367,7 @@ function RoomContent({ params }: RoomPageProps) {
           <button
             type="button"
             onClick={() => {
+              unlockAudioPlayback();
               setSoundEnabled((prev) => {
                 if (prev) stopFrenchNarration();
                 return !prev;
@@ -339,7 +419,7 @@ function RoomContent({ params }: RoomPageProps) {
             />
           ) : (
             <RoomArena
-              key={`${room.phase}-${room.turn_number}`}
+              key={`${room.phase}-${room.game_state.nightStep ?? "main"}-${room.turn_number}`}
               room={room}
               players={players}
               currentPlayer={currentPlayer}

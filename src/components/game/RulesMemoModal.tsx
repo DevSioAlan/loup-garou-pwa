@@ -11,38 +11,33 @@ interface RulesMemoModalProps {
 const NIGHT_CALL_ORDER = [
   {
     step: "1",
-    role: "Cupidon & Enfant Sauvage",
-    note: "Nuit 1 uniquement : Cupidon lie 2 amoureux ; l'Enfant Sauvage choisit son modèle.",
+    role: "Cupidon, Enfant Sauvage & Fratries",
+    note: "Nuit 1 : Cupidon lie 2 amoureux, l'Enfant Sauvage choisit son modèle, Deux Sœurs et Trois Frères se reconnaissent.",
   },
   {
     step: "2",
     role: "Salvateur (Garde)",
-    note: "Protège un joueur contre la morsure des loups (jamais 2 nuits de suite la même cible).",
+    note: "Protège un joueur (ou soi-même) contre la morsure des loups, jamais deux nuits de suite la même cible.",
   },
   {
     step: "3",
-    role: "Voyante",
-    note: "Observe secrètement l'identité d'un joueur de son choix.",
+    role: "Voyante & Renard",
+    note: "La Voyante découvre un rôle ; le Renard flaire un groupe de 3 joueurs pour détecter la présence d'un Loup.",
   },
   {
     step: "4",
-    role: "Loups-Garous (+ Petite Fille)",
-    note: "La meute choisit une victime ; la Petite Fille peut tenter d'espionner discrètement.",
+    role: "Loups-Garous, Loup Blanc, GML & Infect Père",
+    note: "La meute choisit une victime ; l'Infect Père peut l'infecter (1 fois), le GML frapper une 2e cible ou le Loup Blanc traquer un frère.",
   },
   {
     step: "5",
-    role: "Loup-Garou Blanc & Grand Méchant Loup",
-    note: "Le Loup Blanc peut éliminer un loup (1 nuit sur 2) ; le GML ajoute une 2e victime tant qu'aucun loup n'est mort.",
+    role: "Sorcière, Corbeau & Joueur de Flûte",
+    note: "La Sorcière dose ses fioles, le Corbeau pose +2 voix sur un suspect, le Joueur de Flûte charme 2 âmes.",
   },
   {
     step: "6",
-    role: "Sorcière",
-    note: "Découvre la victime des loups et peut utiliser sa potion de vie ou de mort (1 fois chacune).",
-  },
-  {
-    step: "7",
-    role: "Aube & Réveil du Village",
-    note: "Annonce des victimes (Chasseur tire s'il meurt, Amoureux suit dans la tombe), puis débat et vote.",
+    role: "Aube (Ours & Chevalier), Débat & Vote",
+    note: "Annonce des victimes, grognement de l'Ours, Servante Dévouée, tir du Chasseur et vote du village.",
   },
 ];
 
@@ -51,19 +46,19 @@ const VICTORY_CONDITIONS = [
     camp: "Village",
     colorClass: "border-sky-400/35 bg-sky-500/10 text-sky-200",
     icon: Shield,
-    rule: "Éliminer tous les Loups-Garous (et le Loup-Garou Blanc s'il est en jeu).",
+    rule: "Éliminer tous les Loups-Garous (y compris l'Infect Père, les infectés et le Loup Blanc).",
   },
   {
     camp: "Loups-Garous",
     colorClass: "border-rose-400/35 bg-rose-500/10 text-rose-200",
     icon: Skull,
-    rule: "Dévorer le village jusqu'à être au moins autant de loups que d'innocents (ou éliminer le dernier villageois).",
+    rule: "Dévorer ou infecter le village jusqu'à être au moins autant de loups que d'innocents.",
   },
   {
     camp: "Solitaires",
     colorClass: "border-amber-400/35 bg-amber-500/10 text-amber-200",
     icon: Trophy,
-    rule: "Loup-Garou Blanc : rester le dernier survivant. Ange : se faire éliminer dès le 1er jour/nuit. Amoureux mixtes : survivre ensemble.",
+    rule: "Joueur de Flûte : charmer tous les survivants. Loup Blanc : dernier survivant. Ange : éliminé au 1er tour. Amoureux mixtes : survivre à deux.",
   },
 ];
 

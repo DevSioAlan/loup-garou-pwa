@@ -1,20 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
+  Biohazard,
+  BookOpen,
   Check,
+  ChevronDown,
   Clock,
   Crosshair,
+  Dog,
   Eye,
+  Feather,
   FlaskConical,
   Heart,
   Mic,
   Moon,
+  Music,
+  PawPrint,
   RotateCcw,
+  Shield,
   Skull,
   SkipForward,
+  Sparkles,
   Sun,
   Trophy,
+  Users,
   Vote,
 } from "lucide-react";
 import { GAME_ROLES, ROLE_BY_ID } from "@/data/roles";
@@ -24,17 +35,32 @@ import {
   decodeAvatarToProfile,
   getHumanNarratorScript,
   getPhaseLabel,
-  isWolfRole,
+  isEffectiveWolf,
+  markPlayerReady,
   resetRoomToLobby,
+  submitCorbeauTarget,
   submitCupidonLovers,
+  submitGrandMechantTarget,
   submitHunterShotTarget,
+  submitLoupBlancTarget,
+  submitPiperTargets,
+  submitPlayerReaction,
+  submitRenardTargets,
+  submitSalvateurTarget,
   submitSeerInspection,
+  submitServanteClaim,
   submitVoteTarget,
+  submitWildChildModel,
   submitWitchDecision,
+  submitWolfInfectToggle,
 } from "@/lib/roomService";
 import { RoleCard } from "@/components/game/RoleCard";
 import { PlayerAvatar } from "@/components/profile/PlayerAvatar";
-import type { RoomPlayerRecord, RoomRecord } from "@/types/game";
+import type {
+  PlayerReactionType,
+  RoomPlayerRecord,
+  RoomRecord,
+} from "@/types/game";
 
 interface RoomArenaProps {
   room: RoomRecord;
@@ -45,12 +71,127 @@ interface RoomArenaProps {
   onRefresh: () => Promise<void>;
 }
 
+const REACTION_OPTIONS: Array<{
+  type: PlayerReactionType;
+  emoji: string;
+  label: string;
+}> = [
+  { type: "suspect", emoji: "🤔", label: "Suspect" },
+  { type: "innocent", emoji: "🛡️", label: "Innocent" },
+  { type: "shock", emoji: "😱", label: "Choc" },
+  { type: "wolf", emoji: "🐺", label: "Loup !" },
+];
+
+const REACTION_BADGE_MAP: Record<PlayerReactionType, string> = {
+  suspect: "🤔 Suspect",
+  innocent: "🛡️ Innocent",
+  shock: "😱 Choc",
+  wolf: "🐺 Loup !",
+};
+
+interface TargetGridProps {
+  players: RoomPlayerRecord[];
+  currentPlayerId?: string | null;
+  allowSelf?: boolean;
+  disabledIds?: Set<string>;
+  selectedIds?: string[];
+  voteCounts?: Map<string, number>;
+  corbeauTargetId?: string | null;
+  busy?: boolean;
+  accentClass?: string;
+  actionLabel?: (player: RoomPlayerRecord) => string;
+  extraDisabledTag?: (player: RoomPlayerRecord) => string | null;
+  onSelect: (playerId: string) => void;
+}
+
 /**
- * Arène de jeu tour par tour temps réel :
- * - Carte 3D interactive personnelle
- * - Actions spécifiques par rôle et par phase
- * - Mode Narrateur Humain (script à lire pour rôles en vie) / Mode Auto (minuteur)
- * - Liste en direct des joueurs vivants et éliminés
+ * Grille unifiée de ciblage : désactive strictement et visuellement soi-même (sauf exception explicite)
+ * et tout joueur déjà éliminé (is_alive === false).
+ */
+function TargetSelectionGrid({
+  players,
+  currentPlayerId,
+  allowSelf = false,
+  disabledIds,
+  selectedIds = [],
+  voteCounts,
+  corbeauTargetId,
+  busy = false,
+  accentClass = "border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.28)]",
+  actionLabel,
+  extraDisabledTag,
+  onSelect,
+}: TargetGridProps) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {players.map((p) => {
+        const isSelf = p.id === currentPlayerId;
+        const isDead = !p.is_alive;
+        const extraTag = extraDisabledTag?.(p) ?? null;
+        const isCustomDisabled = Boolean(disabledIds?.has(p.id) || extraTag);
+        const disabled =
+          busy || isDead || (isSelf && !allowSelf) || isCustomDisabled;
+        const selected = selectedIds.includes(p.id);
+        const count = voteCounts?.get(p.id) ?? 0;
+        const hasCorbeauMark = corbeauTargetId === p.id;
+
+        let badgeText: string | null = null;
+        if (isDead) {
+          badgeText = "Éliminé";
+        } else if (isSelf && !allowSelf) {
+          badgeText = "Vous";
+        } else if (extraTag) {
+          badgeText = extraTag;
+        }
+
+        return (
+          <button
+            key={p.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              if (disabled) return;
+              onSelect(p.id);
+            }}
+            className={`flex min-h-[46px] items-center justify-between gap-1.5 rounded-2xl border px-3 py-2 text-left text-xs font-semibold transition-all ${
+              disabled
+                ? "cursor-not-allowed border-white/5 bg-black/20 text-slate-500 opacity-45"
+                : selected
+                  ? accentClass
+                  : "border-white/10 bg-black/35 text-slate-200 hover:border-white/25 hover:bg-white/[0.06]"
+            }`}
+          >
+            <span className="truncate">
+              {actionLabel ? actionLabel(p) : p.pseudo}
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              {hasCorbeauMark && !isDead && (
+                <span className="rounded-full bg-violet-500/35 px-1.5 py-0.5 text-[9px] font-bold text-violet-200">
+                  +2
+                </span>
+              )}
+              {badgeText ? (
+                <span className="rounded-full border border-white/10 bg-black/40 px-1.5 py-0.5 text-[9px] font-medium text-slate-400">
+                  {badgeText}
+                </span>
+              ) : (
+                count > 0 && (
+                  <span className="rounded-full bg-rose-500/35 px-2 py-0.5 text-[10px] font-bold text-rose-100">
+                    {count}
+                  </span>
+                )
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Arène de jeu tour par tour temps réel avec séparation des sous-étapes de nuit,
+ * protection anti-triche des rôles et réactions silencieuses de jour.
  */
 export function RoomArena({
   room,
@@ -63,24 +204,37 @@ export function RoomArena({
   const [showCardExpanded, setShowCardExpanded] = useState(
     room.phase === "ROLE_REVEAL"
   );
+  const [showEventLog, setShowEventLog] = useState(false);
   const [cupidSelection, setCupidSelection] = useState<string[]>([]);
+  const [piperSelection, setPiperSelection] = useState<string[]>([]);
   const [witchSave, setWitchSave] = useState(false);
   const [witchKillId, setWitchKillId] = useState<string | null>(null);
   const [witchSubmitted, setWitchSubmitted] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [reactionBusy, setReactionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const myRole = currentPlayer?.role
     ? ROLE_BY_ID[currentPlayer.role] ?? GAME_ROLES[0]
     : null;
   const isAlive = Boolean(currentPlayer?.is_alive);
-  const isWolf = isWolfRole(currentPlayer?.role);
-  const alivePlayers = players.filter((p) => p.is_alive);
   const state = room.game_state;
+  const nightStep = state.nightStep;
+  const isMyEffectiveWolf = currentPlayer
+    ? isEffectiveWolf(currentPlayer, state)
+    : false;
+  const alivePlayers = players.filter((p) => p.is_alive);
 
-  // Minuteur temps réel en Mode Narrateur Automatique (sans setState synchrone dans useEffect)
+  // Tick temps réel pour minuteur auto + expiration des bulles de réaction (6,5 s)
+  const hasActiveReactions = Object.keys(state.reactions ?? {}).length > 0;
   useEffect(() => {
-    if (room.narrator_mode !== "auto" || !state.phaseDeadline) {
+    const needsDeadlineTick =
+      room.narrator_mode === "auto" && Boolean(state.phaseDeadline);
+    const isDaytime =
+      room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE";
+
+    if (!needsDeadlineTick && !isDaytime && !hasActiveReactions) {
       return;
     }
 
@@ -88,7 +242,7 @@ export function RoomArena({
       setNowMs(Date.now());
     }, 500);
     return () => window.clearInterval(interval);
-  }, [room.narrator_mode, state.phaseDeadline]);
+  }, [room.narrator_mode, room.phase, state.phaseDeadline, hasActiveReactions]);
 
   const secondsLeft =
     room.narrator_mode === "auto" && state.phaseDeadline
@@ -98,102 +252,61 @@ export function RoomArena({
         )
       : null;
 
-  const handleAdvance = async () => {
+  const runAction = async (fn: () => Promise<void>) => {
     if (actionBusy) return;
     setActionBusy(true);
+    setActionError(null);
     triggerHaptic(25);
     try {
-      await advanceRoomPhase(room, players);
+      await fn();
       await onRefresh();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Action impossible pour le moment."
+      );
     } finally {
       setActionBusy(false);
     }
   };
 
   const handleCupidToggle = (targetId: string) => {
+    if (
+      targetId === currentPlayer?.id ||
+      !players.some((p) => p.id === targetId && p.is_alive)
+    ) {
+      return;
+    }
     setCupidSelection((prev) => {
-      if (prev.includes(targetId)) {
-        return prev.filter((id) => id !== targetId);
-      }
-      if (prev.length >= 2) {
-        return [prev[1], targetId];
-      }
+      if (prev.includes(targetId)) return prev.filter((id) => id !== targetId);
+      if (prev.length >= 2) return [prev[1], targetId];
       return [...prev, targetId];
     });
   };
 
-  const handleConfirmCupid = async () => {
-    if (cupidSelection.length !== 2 || actionBusy) return;
-    setActionBusy(true);
-    triggerHaptic(25);
-    try {
-      await submitCupidonLovers(room, [cupidSelection[0], cupidSelection[1]]);
-      await onRefresh();
-    } finally {
-      setActionBusy(false);
+  const handlePiperToggle = (targetId: string) => {
+    if (
+      targetId === currentPlayer?.id ||
+      state.charmedPlayerIds.includes(targetId) ||
+      !players.some((p) => p.id === targetId && p.is_alive)
+    ) {
+      return;
     }
+    setPiperSelection((prev) => {
+      if (prev.includes(targetId)) return prev.filter((id) => id !== targetId);
+      if (prev.length >= 2) return [prev[1], targetId];
+      return [...prev, targetId];
+    });
   };
 
-  const handleSeerInspect = async (targetId: string) => {
-    if (actionBusy || state.seerInspectedId) return;
-    setActionBusy(true);
-    triggerHaptic(25);
+  const handleReaction = async (reaction: PlayerReactionType) => {
+    if (!currentPlayer || !isAlive || reactionBusy) return;
+    setReactionBusy(true);
+    triggerHaptic(15);
     try {
-      await submitSeerInspection(room, targetId);
+      await submitPlayerReaction(room, currentPlayer.id, reaction);
       await onRefresh();
     } finally {
-      setActionBusy(false);
-    }
-  };
-
-  const handleVote = async (targetId: string) => {
-    if (!currentPlayer || !isAlive || actionBusy) return;
-    setActionBusy(true);
-    triggerHaptic(25);
-    try {
-      await submitVoteTarget(currentPlayer.id, targetId);
-      await onRefresh();
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  const handleWitchSubmit = async () => {
-    if (actionBusy || witchSubmitted) return;
-    setActionBusy(true);
-    triggerHaptic(25);
-    try {
-      await submitWitchDecision(room, {
-        saveWolfVictim: witchSave,
-        killTargetId: witchKillId,
-      });
-      setWitchSubmitted(true);
-      await onRefresh();
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  const handleHunterShot = async (targetId: string) => {
-    if (actionBusy) return;
-    setActionBusy(true);
-    triggerHaptic(25);
-    try {
-      await submitHunterShotTarget(room, players, targetId);
-      await onRefresh();
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  const handleReplay = async () => {
-    setActionBusy(true);
-    triggerHaptic(25);
-    try {
-      await resetRoomToLobby(room.id);
-      await onRefresh();
-    } finally {
-      setActionBusy(false);
+      setReactionBusy(false);
     }
   };
 
@@ -209,20 +322,30 @@ export function RoomArena({
   const seerTarget = state.seerInspectedId
     ? players.find((p) => p.id === state.seerInspectedId)
     : null;
-  const seerTargetRole = seerTarget?.role
-    ? ROLE_BY_ID[seerTarget.role]
-    : null;
+  const seerTargetRole = seerTarget?.role ? ROLE_BY_ID[seerTarget.role] : null;
 
-  // Victime des loups vue par la Sorcière
-  const wolfVictim = state.wolfTargetId
-    ? players.find((p) => p.id === state.wolfTargetId)
-    : null;
+  // Victime menacée vue par la Sorcière (masquée si déjà protégée par le Salvateur)
+  const wolfVictim =
+    state.wolfTargetId && state.wolfTargetId !== state.salvateurTargetId
+      ? players.find((p) => p.id === state.wolfTargetId)
+      : null;
 
   // Décompte des votes visibles pendant DAY_VOTE ou NIGHT_WEREWOLVES
   const voteCounts = new Map<string, number>();
   for (const p of players) {
     if (p.has_voted && p.target_id) {
       voteCounts.set(p.target_id, (voteCounts.get(p.target_id) ?? 0) + 1);
+    }
+  }
+  if (room.phase === "DAY_VOTE" && state.corbeauTargetId) {
+    const corbeauTargetAlive = players.some(
+      (p) => p.id === state.corbeauTargetId && p.is_alive
+    );
+    if (corbeauTargetAlive) {
+      voteCounts.set(
+        state.corbeauTargetId,
+        (voteCounts.get(state.corbeauTargetId) ?? 0) + 2
+      );
     }
   }
 
@@ -234,6 +357,35 @@ export function RoomArena({
           ? players.find((p) => p.id === state.lovers![0])
           : null
       : null;
+
+  const wildChildModel =
+    currentPlayer?.role === "enfant-sauvage" && state.wildChildModelId
+      ? players.find((p) => p.id === state.wildChildModelId)
+      : null;
+
+  const isCharmed = Boolean(
+    currentPlayer && state.charmedPlayerIds.includes(currentPlayer.id)
+  );
+  const charmedNames = players
+    .filter((p) => state.charmedPlayerIds.includes(p.id))
+    .map((p) => p.pseudo);
+
+  const isSparedIdiot = Boolean(
+    currentPlayer && state.idiotSparedPlayerIds.includes(currentPlayer.id)
+  );
+
+  // Sous-étape active effective pour supporter les anciens/nouveaux états
+  const activeStep =
+    nightStep ??
+    (room.phase === "NIGHT_CUPIDON"
+      ? "cupidon"
+      : room.phase === "NIGHT_SEER"
+        ? "voyante"
+        : room.phase === "NIGHT_WEREWOLVES"
+          ? "loups"
+          : room.phase === "NIGHT_WITCH"
+            ? "sorciere"
+            : null);
 
   return (
     <div className="flex w-full flex-col gap-3.5">
@@ -251,7 +403,7 @@ export function RoomArena({
           </span>
           <div>
             <p className="font-display text-sm font-bold text-amber-100">
-              {getPhaseLabel(room.phase)}
+              {getPhaseLabel(room.phase, nightStep)}
             </p>
             <p className="text-[11px] text-slate-400">
               Tour {room.turn_number} •{" "}
@@ -268,7 +420,13 @@ export function RoomArena({
         )}
       </section>
 
-      {/* Panneau du Narrateur Humain (pour l'hôte en mode human) */}
+      {actionError && (
+        <div className="rounded-2xl border border-rose-400/40 bg-rose-950/60 px-3.5 py-2 text-xs text-rose-200">
+          {actionError}
+        </div>
+      )}
+
+      {/* Panneau du Narrateur Humain */}
       {room.narrator_mode === "human" && (isHost || isOwner) && (
         <section className="glass-panel rounded-3xl border-purple-400/40 p-4 space-y-2.5">
           <div className="flex items-center justify-between">
@@ -276,26 +434,17 @@ export function RoomArena({
               <Mic className="h-3.5 w-3.5 text-purple-300" />
               <span>Script du Narrateur</span>
             </span>
-            <span className="text-[10px] text-slate-400">
-              {narratorScript.headline}
-            </span>
           </div>
 
           <p className="rounded-2xl border border-white/10 bg-black/40 p-3 text-xs leading-relaxed text-amber-50">
-            {narratorScript.script}
+            {narratorScript}
           </p>
-
-          {narratorScript.actionHint && (
-            <p className="text-[11px] text-purple-200/85">
-              {narratorScript.actionHint}
-            </p>
-          )}
 
           {room.phase !== "VICTORY" && (
             <button
               type="button"
               disabled={actionBusy}
-              onClick={handleAdvance}
+              onClick={() => runAction(() => advanceRoomPhase(room, players))}
               className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-purple-700 to-rose-700 text-xs font-bold text-white shadow-[0_6px_18px_rgba(124,58,237,0.4)] active:scale-[0.98] disabled:opacity-50"
             >
               <SkipForward className="h-4 w-4" />
@@ -305,7 +454,7 @@ export function RoomArena({
         </section>
       )}
 
-      {/* Carte 3D secrète du joueur (toujours consultable en maintenant le doigt) */}
+      {/* Carte 3D secrète du joueur (le rôle n'est jamais affiché en clair dans l'écran hors appui long) */}
       {myRole && room.phase !== "VICTORY" && (
         <section className="space-y-2">
           <button
@@ -338,24 +487,78 @@ export function RoomArena({
               </span>
             </div>
           )}
+
+          {wildChildModel && (
+            <div className="glass-panel flex items-center justify-center gap-2 rounded-2xl border-lime-400/35 px-3 py-2 text-xs text-lime-200">
+              <PawPrint className="h-3.5 w-3.5 text-lime-400" />
+              <span>
+                {state.wildChildTransformed
+                  ? "Votre modèle a péri : vous combattez désormais avec les Loups-Garous !"
+                  : `Votre modèle secret est ${wildChildModel.pseudo}.`}
+              </span>
+            </div>
+          )}
+
+          {currentPlayer &&
+            state.infectedPlayerIds.includes(currentPlayer.id) && (
+              <div className="glass-panel flex items-center justify-center gap-2 rounded-2xl border-lime-400/40 px-3 py-2 text-xs text-lime-200">
+                <Biohazard className="h-3.5 w-3.5 text-lime-400" />
+                <span>
+                  L&apos;Infect Père vous a mordu : vous appartenez désormais à la
+                  meute tout en gardant vos pouvoirs !
+                </span>
+              </div>
+            )}
+
+          {isCharmed && (
+            <div className="glass-panel flex flex-col items-center gap-1 rounded-2xl border-emerald-400/35 px-3 py-2 text-center text-xs text-emerald-200">
+              <span className="inline-flex items-center gap-1.5 font-semibold">
+                <Music className="h-3.5 w-3.5 text-emerald-400" />
+                Vous êtes envoûté(e) par la Flûte
+              </span>
+              {charmedNames.length > 1 && (
+                <span className="text-[11px] text-emerald-100/80">
+                  Joueurs charmés connus : {charmedNames.join(", ")}
+                </span>
+              )}
+            </div>
+          )}
         </section>
       )}
 
-      {/* ==================== ACTIONS SPÉCIFIQUES À LA PHASE ==================== */}
-
-      {/* 1. ROLE_REVEAL */}
+      {/* ==================== 1. ROLE_REVEAL ==================== */}
       {room.phase === "ROLE_REVEAL" && (
-        <section className="glass-panel rounded-3xl p-4 text-center space-y-2">
+        <section className="glass-panel rounded-3xl p-4 text-center space-y-2.5">
           <p className="text-xs leading-relaxed text-slate-200">
             Maintenez votre doigt sur la carte ci-dessus pour mémoriser votre
-            rôle secret. La première nuit va bientôt tomber...
+            rôle secret. Dès que vous relâchez, votre identité disparaît.
           </p>
+          {currentPlayer && (
+            <button
+              type="button"
+              disabled={
+                actionBusy ||
+                state.readyUserIds.includes(currentPlayer.user_id)
+              }
+              onClick={() =>
+                runAction(() => markPlayerReady(room, currentPlayer.user_id))
+              }
+              className="inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/35 bg-emerald-500/15 px-4 text-xs font-bold text-emerald-100 disabled:opacity-55"
+            >
+              <Check className="h-4 w-4" />
+              <span>
+                {state.readyUserIds.includes(currentPlayer.user_id)
+                  ? `Prêt (${state.readyUserIds.length}/${alivePlayers.length})`
+                  : "J'ai mémorisé mon rôle (Prêt)"}
+              </span>
+            </button>
+          )}
           {(isHost || isOwner) && room.narrator_mode === "auto" && (
             <button
               type="button"
               disabled={actionBusy}
-              onClick={handleAdvance}
-              className="mt-1 inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full border border-amber-300/35 bg-amber-400/15 px-4 text-xs font-semibold text-amber-100"
+              onClick={() => runAction(() => advanceRoomPhase(room, players))}
+              className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full border border-amber-300/35 bg-amber-400/15 px-4 text-xs font-semibold text-amber-100"
             >
               <SkipForward className="h-3.5 w-3.5" />
               <span>Commencer la nuit</span>
@@ -364,8 +567,8 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 2. NIGHT_CUPIDON */}
-      {room.phase === "NIGHT_CUPIDON" && (
+      {/* ==================== 2. SOUS-ÉTAPES DE NUIT ==================== */}
+      {isNightPhase && activeStep === "cupidon" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && currentPlayer?.role === "cupidon" ? (
             <>
@@ -381,29 +584,28 @@ export function RoomArena({
                 </p>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-2">
-                    {alivePlayers.map((p) => {
-                      const picked = cupidSelection.includes(p.id);
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => handleCupidToggle(p.id)}
-                          className={`min-h-[44px] rounded-2xl border px-3 py-2 text-xs font-semibold transition-all ${
-                            picked
-                              ? "border-pink-400 bg-pink-500/25 text-pink-100"
-                              : "border-white/10 bg-black/35 text-slate-200"
-                          }`}
-                        >
-                          {p.pseudo}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <TargetSelectionGrid
+                    players={players}
+                    currentPlayerId={currentPlayer.id}
+                    allowSelf={false}
+                    selectedIds={cupidSelection}
+                    busy={actionBusy}
+                    accentClass="border-pink-400 bg-pink-500/25 text-pink-100"
+                    onSelect={handleCupidToggle}
+                  />
                   <button
                     type="button"
                     disabled={cupidSelection.length !== 2 || actionBusy}
-                    onClick={handleConfirmCupid}
+                    onClick={() =>
+                      runAction(() =>
+                        submitCupidonLovers(
+                          room,
+                          [cupidSelection[0], cupidSelection[1]],
+                          players,
+                          currentPlayer.id
+                        )
+                      )
+                    }
                     className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-pink-600 to-purple-600 text-xs font-bold text-white disabled:opacity-40"
                   >
                     <Check className="h-4 w-4" />
@@ -420,8 +622,136 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 3. NIGHT_SEER */}
-      {room.phase === "NIGHT_SEER" && (
+      {isNightPhase && activeStep === "enfant-sauvage" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "enfant-sauvage" ? (
+            <>
+              <div className="flex items-center gap-2 text-lime-200">
+                <PawPrint className="h-4 w-4 text-lime-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Choisissez votre modèle secret
+                </h3>
+              </div>
+              {state.wildChildModelId ? (
+                <p className="text-xs text-emerald-200">
+                  Votre modèle a été choisi en silence.
+                </p>
+              ) : (
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf={false}
+                  busy={actionBusy}
+                  accentClass="border-lime-400 bg-lime-500/25 text-lime-100"
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitWildChildModel(room, players, currentPlayer.id, id)
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              L&apos;Enfant Sauvage choisit secrètement son modèle pour la partie...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "fratrie" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive &&
+          (currentPlayer?.role === "soeurs" ||
+            currentPlayer?.role === "freres") ? (
+            <>
+              <div className="flex items-center gap-2 text-sky-200">
+                <Users className="h-4 w-4 text-sky-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Reconnaissance de la Fratrie
+                </h3>
+              </div>
+              <div className="rounded-2xl border border-sky-400/25 bg-black/40 p-3 text-xs text-sky-100">
+                <p className="mb-1 text-slate-300">
+                  Vos alliés du même sang :
+                </p>
+                <p className="font-semibold">
+                  {players
+                    .filter(
+                      (p) => p.is_alive && p.role === currentPlayer.role
+                    )
+                    .map((p) => p.pseudo)
+                    .join(" • ")}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={
+                  actionBusy ||
+                  state.readyUserIds.includes(currentPlayer.user_id)
+                }
+                onClick={() =>
+                  runAction(() => markPlayerReady(room, currentPlayer.user_id))
+                }
+                className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 to-indigo-600 text-xs font-bold text-white disabled:opacity-50"
+              >
+                <Check className="h-4 w-4" />
+                <span>
+                  {state.readyUserIds.includes(currentPlayer.user_id)
+                    ? "Reconnaissance confirmée"
+                    : "C'est noté, refermer les yeux"}
+                </span>
+              </button>
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Les Deux Sœurs et Trois Frères se reconnaissent en silence...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "salvateur" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "salvateur" ? (
+            <>
+              <div className="flex items-center gap-2 text-cyan-200">
+                <Shield className="h-4 w-4 text-cyan-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Bouclier du Salvateur
+                </h3>
+              </div>
+              {state.salvateurTargetId ? (
+                <p className="text-xs text-emerald-200">
+                  Votre protection sacrée veille jusqu&apos;à l&apos;aube.
+                </p>
+              ) : (
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf
+                  busy={actionBusy}
+                  accentClass="border-cyan-400 bg-cyan-500/25 text-cyan-100"
+                  extraDisabledTag={(p) =>
+                    p.id === state.salvateurLastTargetId ? "Nuit préc." : null
+                  }
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitSalvateurTarget(room, players, currentPlayer.id, id)
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Salvateur étend secrètement son bouclier protecteur...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "voyante" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && currentPlayer?.role === "voyante" ? (
             <>
@@ -442,7 +772,8 @@ export function RoomArena({
                   }}
                 >
                   <p className="text-xs text-slate-300">
-                    La véritable nature de <strong>{seerTarget.pseudo}</strong> est :
+                    La véritable nature de <strong>{seerTarget.pseudo}</strong>{" "}
+                    est :
                   </p>
                   <p
                     className="font-display mt-1 text-lg font-bold"
@@ -452,21 +783,19 @@ export function RoomArena({
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  {alivePlayers
-                    .filter((p) => p.id !== currentPlayer.id)
-                    .map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => handleSeerInspect(p.id)}
-                        className="min-h-[44px] rounded-2xl border border-purple-400/30 bg-purple-500/10 px-3 py-2 text-xs font-semibold text-purple-100 hover:bg-purple-500/20"
-                      >
-                        Observer {p.pseudo}
-                      </button>
-                    ))}
-                </div>
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf={false}
+                  busy={actionBusy}
+                  actionLabel={(p) => `Observer ${p.pseudo}`}
+                  accentClass="border-purple-400 bg-purple-500/20 text-purple-100"
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitSeerInspection(room, id, players, currentPlayer.id)
+                    )
+                  }
+                />
               )}
             </>
           ) : (
@@ -477,10 +806,60 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 4. NIGHT_WEREWOLVES */}
-      {room.phase === "NIGHT_WEREWOLVES" && (
+      {isNightPhase && activeStep === "renard" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
-          {isAlive && isWolf ? (
+          {isAlive && currentPlayer?.role === "renard" ? (
+            <>
+              <div className="flex items-center gap-2 text-orange-200">
+                <Dog className="h-4 w-4 text-orange-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Flair du Renard (3 voisins)
+                </h3>
+              </div>
+
+              {state.foxCheckedTonight && state.foxLastResult ? (
+                <div
+                  className={`rounded-2xl border p-3.5 text-center text-xs ${
+                    state.foxLastResult.hasWolf
+                      ? "border-rose-400/50 bg-rose-950/50 text-rose-100"
+                      : "border-slate-500/40 bg-black/50 text-slate-300"
+                  }`}
+                >
+                  <p className="mb-1 text-[11px] text-slate-300">
+                    Zone flairée : {state.foxLastResult.names.join(", ")}
+                  </p>
+                  <p className="font-bold">
+                    {state.foxLastResult.hasWolf
+                      ? "Un Loup-Garou se cache parmi ce groupe !"
+                      : "Aucun loup détecté — vous perdez votre flair pour la suite."}
+                  </p>
+                </div>
+              ) : (
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf={false}
+                  busy={actionBusy}
+                  actionLabel={(p) => `Flairer ${p.pseudo}`}
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitRenardTargets(room, players, currentPlayer.id, id)
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Renard sonde l&apos;odeur d&apos;un groupe de villageois...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "loups" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && isMyEffectiveWolf && currentPlayer ? (
             <>
               <div className="flex items-center justify-between">
                 <span className="font-display text-sm font-bold text-rose-200">
@@ -491,34 +870,57 @@ export function RoomArena({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              {/* Reconnaissance privée entre alliés loups (visible uniquement ici) */}
+              <div className="rounded-xl border border-rose-500/25 bg-rose-950/35 px-3 py-1.5 text-[11px] text-rose-200">
+                Meute :{" "}
                 {alivePlayers
-                  .filter((p) => !isWolfRole(p.role))
-                  .map((p) => {
-                    const selectedByMe = currentPlayer?.target_id === p.id;
-                    const count = voteCounts.get(p.id) ?? 0;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={actionBusy}
-                        onClick={() => handleVote(p.id)}
-                        className={`flex min-h-[46px] items-center justify-between rounded-2xl border px-3 py-2 text-xs font-semibold transition-all ${
-                          selectedByMe
-                            ? "border-rose-400 bg-rose-500/25 text-white shadow-[0_0_16px_rgba(225,29,72,0.35)]"
-                            : "border-white/10 bg-black/35 text-slate-200"
-                        }`}
-                      >
-                        <span className="truncate">{p.pseudo}</span>
-                        {count > 0 && (
-                          <span className="rounded-full bg-rose-500/40 px-2 py-0.5 text-[10px] font-bold text-rose-100">
-                            {count}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                  .filter((p) => isEffectiveWolf(p, state))
+                  .map((p) => p.pseudo)
+                  .join(" • ")}
               </div>
+
+              {currentPlayer.role === "infect-pere-des-loups" &&
+                !state.infectUsed && (
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() =>
+                        submitWolfInfectToggle(room, !state.infectTonight)
+                      )
+                    }
+                    className={`flex min-h-[42px] w-full items-center justify-center gap-2 rounded-2xl border px-3 text-xs font-bold transition-all ${
+                      state.infectTonight
+                        ? "border-lime-400 bg-lime-500/25 text-lime-100"
+                        : "border-white/15 bg-black/40 text-slate-200"
+                    }`}
+                  >
+                    <Biohazard className="h-4 w-4 text-lime-400" />
+                    <span>
+                      {state.infectTonight
+                        ? "Infection activée : la proie rejoindra la meute"
+                        : "Pouvoir d'Infection (1x) : convertir la proie"}
+                    </span>
+                  </button>
+                )}
+
+              <TargetSelectionGrid
+                players={players}
+                currentPlayerId={currentPlayer.id}
+                allowSelf={false}
+                selectedIds={
+                  currentPlayer.target_id ? [currentPlayer.target_id] : []
+                }
+                voteCounts={voteCounts}
+                busy={actionBusy}
+                accentClass="border-rose-400 bg-rose-500/25 text-white shadow-[0_0_16px_rgba(225,29,72,0.35)]"
+                extraDisabledTag={(p) =>
+                  isEffectiveWolf(p, state) ? "Allié" : null
+                }
+                onSelect={(id) =>
+                  runAction(() => submitVoteTarget(currentPlayer.id, id))
+                }
+              />
             </>
           ) : isAlive && currentPlayer?.role === "petite-fille" ? (
             <div className="text-center space-y-1">
@@ -526,7 +928,10 @@ export function RoomArena({
                 Vous écoutez discrètement dans le noir...
               </p>
               <p className="text-[11px] text-slate-400">
-                {players.filter((p) => isWolfRole(p.role) && p.has_voted).length}{" "}
+                {
+                  players.filter((p) => isEffectiveWolf(p, state) && p.has_voted)
+                    .length
+                }{" "}
                 loup(s) ont déjà désigné une proie cette nuit.
               </p>
             </div>
@@ -538,8 +943,125 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 5. NIGHT_WITCH */}
-      {room.phase === "NIGHT_WITCH" && (
+      {isNightPhase && activeStep === "loup-blanc" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "loup-garou-blanc" ? (
+            <>
+              <div className="flex items-center gap-2 text-slate-200">
+                <Sparkles className="h-4 w-4 text-slate-100" />
+                <h3 className="font-display text-sm font-bold">
+                  Trahison du Loup-Garou Blanc
+                </h3>
+              </div>
+
+              {state.loupBlancTargetId ||
+              state.readyUserIds.includes(currentPlayer.user_id) ? (
+                <p className="text-xs text-slate-200">
+                  Votre décision solitaire est enregistrée.
+                </p>
+              ) : (
+                <>
+                  <TargetSelectionGrid
+                    players={players}
+                    currentPlayerId={currentPlayer.id}
+                    allowSelf={false}
+                    busy={actionBusy}
+                    accentClass="border-slate-200 bg-slate-200/20 text-white"
+                    extraDisabledTag={(p) =>
+                      !isEffectiveWolf(p, state) ? "Non loup" : null
+                    }
+                    onSelect={(id) =>
+                      runAction(() =>
+                        submitLoupBlancTarget(
+                          room,
+                          players,
+                          currentPlayer.id,
+                          id
+                        )
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() => markPlayerReady(room, currentPlayer.user_id))
+                    }
+                    className="flex min-h-[42px] w-full items-center justify-center rounded-2xl border border-white/15 bg-black/40 text-xs font-semibold text-slate-200"
+                  >
+                    Épargner la meute cette nuit
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Un loup solitaire observe ses semblables dans la pénombre...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "grand-mechant-loup" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "grand-mechant-loup" ? (
+            <>
+              <div className="flex items-center gap-2 text-rose-200">
+                <Skull className="h-4 w-4 text-rose-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Seconde Proie du Grand Méchant Loup
+                </h3>
+              </div>
+
+              {state.grandMechantSecondTargetId ||
+              state.readyUserIds.includes(currentPlayer.user_id) ? (
+                <p className="text-xs text-rose-200">
+                  Votre chasse supplémentaire est scellée.
+                </p>
+              ) : (
+                <>
+                  <TargetSelectionGrid
+                    players={players}
+                    currentPlayerId={currentPlayer.id}
+                    allowSelf={false}
+                    busy={actionBusy}
+                    accentClass="border-rose-400 bg-rose-500/25 text-rose-100"
+                    extraDisabledTag={(p) =>
+                      isEffectiveWolf(p, state) ? "Allié" : null
+                    }
+                    onSelect={(id) =>
+                      runAction(() =>
+                        submitGrandMechantTarget(
+                          room,
+                          players,
+                          currentPlayer.id,
+                          id
+                        )
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() => markPlayerReady(room, currentPlayer.user_id))
+                    }
+                    className="flex min-h-[42px] w-full items-center justify-center rounded-2xl border border-white/15 bg-black/40 text-xs font-semibold text-slate-200"
+                  >
+                    Ne pas chasser de seconde cible
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Grand Méchant Loup rôde encore dans l&apos;obscurité...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "sorciere" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && currentPlayer?.role === "sorciere" ? (
             <>
@@ -550,7 +1072,8 @@ export function RoomArena({
                 </h3>
               </div>
 
-              {witchSubmitted ? (
+              {witchSubmitted ||
+              state.readyUserIds.includes(currentPlayer.user_id) ? (
                 <p className="text-xs text-emerald-200">
                   Vos choix nocturnes ont été scellés.
                 </p>
@@ -559,13 +1082,13 @@ export function RoomArena({
                   <div className="rounded-2xl border border-white/10 bg-black/40 p-3 text-xs text-slate-200">
                     {wolfVictim ? (
                       <span>
-                        Victime des loups cette nuit :{" "}
+                        Victime menacée cette nuit :{" "}
                         <strong className="text-rose-300">
                           {wolfVictim.pseudo}
                         </strong>
                       </span>
                     ) : (
-                      <span>Aucune victime désignée par les loups cette nuit.</span>
+                      <span>Aucune victime menacée par les loups ce soir.</span>
                     )}
                   </div>
 
@@ -592,38 +1115,41 @@ export function RoomArena({
                       <p className="text-[11px] font-medium text-slate-300">
                         Potion de Mort (optionnel) :
                       </p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {alivePlayers
-                          .filter((p) => p.id !== currentPlayer.id)
-                          .map((p) => {
-                            const selected = witchKillId === p.id;
-                            return (
-                              <button
-                                key={p.id}
-                                type="button"
-                                onClick={() =>
-                                  setWitchKillId((prev) =>
-                                    prev === p.id ? null : p.id
-                                  )
-                                }
-                                className={`min-h-[40px] rounded-xl border px-2.5 text-xs font-medium ${
-                                  selected
-                                    ? "border-purple-400 bg-purple-500/25 text-purple-100"
-                                    : "border-white/10 bg-black/35 text-slate-300"
-                                }`}
-                              >
-                                Empoisonner {p.pseudo}
-                              </button>
-                            );
-                          })}
-                      </div>
+                      <TargetSelectionGrid
+                        players={players}
+                        currentPlayerId={currentPlayer.id}
+                        allowSelf={false}
+                        selectedIds={witchKillId ? [witchKillId] : []}
+                        busy={actionBusy}
+                        actionLabel={(p) => `Empoisonner ${p.pseudo}`}
+                        accentClass="border-purple-400 bg-purple-500/25 text-purple-100"
+                        onSelect={(id) =>
+                          setWitchKillId((prev) => (prev === id ? null : id))
+                        }
+                      />
                     </div>
                   )}
 
                   <button
                     type="button"
                     disabled={actionBusy}
-                    onClick={handleWitchSubmit}
+                    onClick={() =>
+                      runAction(async () => {
+                        await submitWitchDecision(
+                          room,
+                          {
+                            saveWolfVictim: witchSave,
+                            killTargetId: witchKillId,
+                          },
+                          players,
+                          currentPlayer.id
+                        );
+                        if (!witchSave && !witchKillId) {
+                          await markPlayerReady(room, currentPlayer.user_id);
+                        }
+                        setWitchSubmitted(true);
+                      })
+                    }
                     className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 text-xs font-bold text-white"
                   >
                     <Check className="h-4 w-4" />
@@ -640,9 +1166,103 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 6. DAY_ANNOUNCEMENT */}
+      {isNightPhase && activeStep === "corbeau" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "corbeau" ? (
+            <>
+              <div className="flex items-center gap-2 text-violet-200">
+                <Feather className="h-4 w-4 text-violet-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Malédiction du Corbeau (+2 voix)
+                </h3>
+              </div>
+              {state.corbeauTargetId ? (
+                <p className="text-xs text-violet-200">
+                  Une plume noire désignera cette cible au lever du soleil.
+                </p>
+              ) : (
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf={false}
+                  busy={actionBusy}
+                  accentClass="border-violet-400 bg-violet-500/25 text-violet-100"
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitCorbeauTarget(room, players, currentPlayer.id, id)
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Corbeau plane silencieusement au-dessus des toits...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "joueur-de-flute" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "joueur-de-flute" ? (
+            <>
+              <div className="flex items-center gap-2 text-emerald-200">
+                <Music className="h-4 w-4 text-emerald-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Envoûtement de la Flûte ({piperSelection.length}/2)
+                </h3>
+              </div>
+              {state.piperTargetsTonight.length > 0 ? (
+                <p className="text-xs text-emerald-200">
+                  Votre mélodie s&apos;étend désormais sur de nouveaux villageois.
+                </p>
+              ) : (
+                <>
+                  <TargetSelectionGrid
+                    players={players}
+                    currentPlayerId={currentPlayer.id}
+                    allowSelf={false}
+                    selectedIds={piperSelection}
+                    busy={actionBusy}
+                    accentClass="border-emerald-400 bg-emerald-500/25 text-emerald-100"
+                    extraDisabledTag={(p) =>
+                      state.charmedPlayerIds.includes(p.id) ? "Charmé" : null
+                    }
+                    onSelect={handlePiperToggle}
+                  />
+                  <button
+                    type="button"
+                    disabled={piperSelection.length === 0 || actionBusy}
+                    onClick={() =>
+                      runAction(() =>
+                        submitPiperTargets(
+                          room,
+                          players,
+                          currentPlayer.id,
+                          piperSelection
+                        )
+                      )
+                    }
+                    className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-cyan-600 text-xs font-bold text-white disabled:opacity-40"
+                  >
+                    <Music className="h-4 w-4" />
+                    <span>Charmer ces joueurs</span>
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Une douce mélodie de flûte flotte dans la brume nocturne...
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* ==================== 3. DAY_ANNOUNCEMENT ==================== */}
       {room.phase === "DAY_ANNOUNCEMENT" && (
-        <section className="glass-panel rounded-3xl border-amber-300/35 p-4 text-center space-y-2.5">
+        <section className="glass-panel rounded-3xl border-amber-300/35 p-4 text-center space-y-3">
           <Sun className="mx-auto h-7 w-7 text-amber-300" />
           <p className="font-display text-base font-bold text-amber-100">
             Le Soleil se lève
@@ -650,10 +1270,44 @@ export function RoomArena({
           <p className="text-xs leading-relaxed text-slate-200">
             {state.lastAnnouncement || "Le village se réveille."}
           </p>
+
+          {/* Servante Dévouée : option de reprendre le rôle d'une victime nocturne */}
+          {isAlive &&
+            currentPlayer?.role === "servante-devouee" &&
+            !state.servanteUsed &&
+            state.nightVictims.length > 0 && (
+              <div className="rounded-2xl border border-rose-400/35 bg-rose-950/35 p-3 text-left space-y-2">
+                <p className="text-xs font-bold text-rose-200">
+                  Dévotion (1x) : reprendre le destin d&apos;une victime ?
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {state.nightVictims.map((v) => (
+                    <button
+                      key={v.playerId}
+                      type="button"
+                      disabled={actionBusy}
+                      onClick={() =>
+                        runAction(() =>
+                          submitServanteClaim(
+                            room,
+                            players,
+                            currentPlayer.id,
+                            v.playerId
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-rose-400/40 bg-rose-500/20 px-3 py-1.5 text-xs font-semibold text-rose-100"
+                    >
+                      Reprendre le rôle de {v.pseudo}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
         </section>
       )}
 
-      {/* 7. DAY_VOTE */}
+      {/* ==================== 4. DAY_VOTE ==================== */}
       {room.phase === "DAY_VOTE" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -673,40 +1327,57 @@ export function RoomArena({
             <p className="text-center text-xs text-slate-400">
               Les morts ne peuvent plus voter. Observez le débat en silence.
             </p>
+          ) : isSparedIdiot ? (
+            <p className="text-center text-xs text-amber-200">
+              Épargné par le village, l&apos;Idiot du Village ne peut plus voter.
+            </p>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {alivePlayers
-                .filter((p) => p.id !== currentPlayer?.id)
-                .map((p) => {
-                  const selectedByMe = currentPlayer?.target_id === p.id;
-                  const votes = voteCounts.get(p.id) ?? 0;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      disabled={actionBusy}
-                      onClick={() => handleVote(p.id)}
-                      className={`flex min-h-[48px] items-center justify-between rounded-2xl border px-3 py-2 text-xs font-semibold transition-all ${
-                        selectedByMe
-                          ? "border-amber-400 bg-amber-500/20 text-amber-100 shadow-[0_0_16px_rgba(245,158,11,0.3)]"
-                          : "border-white/10 bg-black/35 text-slate-200"
-                      }`}
-                    >
-                      <span className="truncate">{p.pseudo}</span>
-                      {votes > 0 && (
-                        <span className="rounded-full bg-rose-500/35 px-2 py-0.5 text-[10px] font-bold text-rose-100">
-                          {votes}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-            </div>
+            <TargetSelectionGrid
+              players={players}
+              currentPlayerId={currentPlayer?.id}
+              allowSelf={false}
+              selectedIds={
+                currentPlayer?.target_id ? [currentPlayer.target_id] : []
+              }
+              voteCounts={voteCounts}
+              corbeauTargetId={state.corbeauTargetId}
+              busy={actionBusy}
+              onSelect={(id) =>
+                currentPlayer
+                  ? runAction(() => submitVoteTarget(currentPlayer.id, id))
+                  : undefined
+              }
+            />
           )}
         </section>
       )}
 
-      {/* 8. HUNTER_SHOT */}
+      {/* Réactions rapides silencieuses de jour */}
+      {(room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE") &&
+        isAlive &&
+        currentPlayer && (
+          <section className="glass-panel flex flex-wrap items-center justify-between gap-2 rounded-2xl px-3 py-2.5">
+            <span className="text-[11px] font-semibold text-slate-300">
+              Réaction rapide :
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {REACTION_OPTIONS.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  disabled={reactionBusy}
+                  onClick={() => void handleReaction(item.type)}
+                  className="inline-flex min-h-[34px] items-center gap-1 rounded-full border border-white/15 bg-black/40 px-2.5 text-[11px] font-medium text-amber-100 transition hover:bg-white/10 active:scale-95"
+                >
+                  <span>{item.emoji}</span>
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+      {/* ==================== 5. HUNTER_SHOT ==================== */}
       {room.phase === "HUNTER_SHOT" && (
         <section className="glass-panel rounded-3xl border-amber-400/45 p-4 space-y-3">
           <div className="flex items-center gap-2 text-amber-200">
@@ -717,19 +1388,17 @@ export function RoomArena({
           </div>
 
           {currentPlayer?.id === state.hunterPendingPlayerId ? (
-            <div className="grid grid-cols-2 gap-2">
-              {alivePlayers.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={actionBusy}
-                  onClick={() => handleHunterShot(p.id)}
-                  className="min-h-[46px] rounded-2xl border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-100 hover:bg-amber-500/25"
-                >
-                  Tirer sur {p.pseudo}
-                </button>
-              ))}
-            </div>
+            <TargetSelectionGrid
+              players={players}
+              currentPlayerId={currentPlayer.id}
+              allowSelf={false}
+              busy={actionBusy}
+              actionLabel={(p) => `Tirer sur ${p.pseudo}`}
+              accentClass="border-amber-400 bg-amber-500/20 text-amber-100"
+              onSelect={(id) =>
+                runAction(() => submitHunterShotTarget(room, players, id))
+              }
+            />
           ) : (
             <p className="text-xs text-slate-300">
               Le Chasseur vise sa dernière cible avant de succomber...
@@ -738,7 +1407,7 @@ export function RoomArena({
         </section>
       )}
 
-      {/* 9. VICTORY */}
+      {/* ==================== 6. VICTORY ==================== */}
       {room.phase === "VICTORY" && (
         <section className="glass-panel rounded-3xl border-amber-300/45 p-5 text-center space-y-3">
           <Trophy className="mx-auto h-10 w-10 text-amber-300 drop-shadow-[0_0_16px_rgba(251,191,36,0.75)]" />
@@ -753,7 +1422,7 @@ export function RoomArena({
             <button
               type="button"
               disabled={actionBusy}
-              onClick={handleReplay}
+              onClick={() => runAction(() => resetRoomToLobby(room.id))}
               className="mt-2 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-700 to-amber-600 text-sm font-bold text-white"
             >
               <RotateCcw className="h-4 w-4" />
@@ -763,13 +1432,15 @@ export function RoomArena({
         </section>
       )}
 
-      {/* Liste des joueurs vivants / éliminés */}
+      {/* ==================== LISTE DES JOUEURS (ANTI-TRICHE TOTALE) ==================== */}
       <section className="glass-panel rounded-3xl p-4 space-y-2.5">
         <div className="flex items-center justify-between text-xs">
           <span className="font-display font-bold text-amber-100">
             Villageois ({alivePlayers.length}/{players.length} en vie)
           </span>
-          <span className="text-[11px] text-slate-400">Temps réel</span>
+          <span className="text-[11px] text-slate-400">
+            Rôles secrets masqués
+          </span>
         </div>
 
         <div className="space-y-1.5">
@@ -779,17 +1450,22 @@ export function RoomArena({
               p.pseudo,
               p.is_owner
             );
-            const showRole =
-              room.phase === "VICTORY" ||
-              !p.is_alive ||
-              p.id === currentPlayer?.id ||
-              (isWolf && isWolfRole(p.role));
+            // Confidentialité stricte : aucun rôle vivant (pas même "(Moi)") n'est affiché en clair ici
+            const showRole = room.phase === "VICTORY" || !p.is_alive;
             const roleInfo = p.role ? ROLE_BY_ID[p.role] : null;
+            const activeReaction = state.reactions?.[p.id];
+            const showReactionBubble = Boolean(
+              activeReaction && nowMs - activeReaction.sentAt < 6500
+            );
+            const hasCorbeauCurse =
+              p.is_alive &&
+              (room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE") &&
+              state.corbeauTargetId === p.id;
 
             return (
               <div
                 key={p.id}
-                className={`flex items-center justify-between rounded-2xl border px-3 py-2 ${
+                className={`relative flex items-center justify-between rounded-2xl border px-3 py-2 ${
                   p.is_alive
                     ? "border-white/10 bg-black/35"
                     : "border-white/5 bg-black/20 opacity-55"
@@ -798,16 +1474,25 @@ export function RoomArena({
                 <div className="flex min-w-0 items-center gap-2.5">
                   <PlayerAvatar profile={avatarProfile} size="sm" />
                   <div className="min-w-0">
-                    <p
-                      className={`truncate text-xs font-semibold ${
-                        p.is_alive
-                          ? "text-amber-50"
-                          : "text-slate-400 line-through"
-                      }`}
-                    >
-                      {p.pseudo}
-                      {p.id === currentPlayer?.id ? " (Moi)" : ""}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p
+                        className={`truncate text-xs font-semibold ${
+                          p.is_alive
+                            ? "text-amber-50"
+                            : "text-slate-400 line-through"
+                        }`}
+                      >
+                        {p.pseudo}
+                        {p.id === currentPlayer?.id ? " (Moi)" : ""}
+                      </p>
+
+                      {hasCorbeauCurse && (
+                        <span className="rounded-full border border-violet-400/40 bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-bold text-violet-200">
+                          Plume +2
+                        </span>
+                      )}
+                    </div>
+
                     {showRole && roleInfo && (
                       <p
                         className="text-[10px] font-medium"
@@ -820,6 +1505,20 @@ export function RoomArena({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <AnimatePresence>
+                    {showReactionBubble && activeReaction && (
+                      <motion.span
+                        key={`${activeReaction.playerId}-${activeReaction.sentAt}`}
+                        initial={{ opacity: 0, scale: 0.85, y: 4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.85 }}
+                        className="rounded-full border border-amber-300/40 bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-amber-100 shadow-md"
+                      >
+                        {REACTION_BADGE_MAP[activeReaction.reaction]}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+
                   {p.is_alive ? (
                     p.has_voted && (
                       <span className="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-200">
@@ -838,6 +1537,47 @@ export function RoomArena({
           })}
         </div>
       </section>
+
+      {/* ==================== JOURNAL DE PARTIE DISCRET ==================== */}
+      {state.eventLog.length > 0 && (
+        <section className="glass-panel rounded-2xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowEventLog((prev) => !prev)}
+            className="flex w-full items-center justify-between px-4 py-2.5 text-xs font-semibold text-slate-200"
+          >
+            <span className="inline-flex items-center gap-2">
+              <BookOpen className="h-3.5 w-3.5 text-amber-300" />
+              <span>Journal de Partie ({state.eventLog.length})</span>
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 text-slate-400 transition-transform ${
+                showEventLog ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          <AnimatePresence>
+            {showEventLog && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="border-t border-white/10 px-4 py-3 space-y-1.5"
+              >
+                {[...state.eventLog].reverse().map((entry) => (
+                  <p
+                    key={entry.id}
+                    className="text-[11px] leading-relaxed text-slate-300"
+                  >
+                    • {entry.text}
+                  </p>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+      )}
     </div>
   );
 }

@@ -14,7 +14,15 @@ export type RoleIconName =
   | "scroll"
   | "smile"
   | "paw"
-  | "feather";
+  | "feather"
+  | "bird"
+  | "dog"
+  | "crown"
+  | "music"
+  | "biohazard"
+  | "sword"
+  | "users"
+  | "pawprint";
 
 export interface RoleAuraTheme {
   /** Couleur principale de l'aura (hex) */
@@ -55,7 +63,11 @@ export type AvatarPresetId =
   | "flask"
   | "flame"
   | "shield"
-  | "sparkles";
+  | "sparkles"
+  | "bird"
+  | "fox"
+  | "music"
+  | "sword";
 
 export interface PlayerProfile {
   nickname: string;
@@ -81,11 +93,48 @@ export type GamePhase =
   | "HUNTER_SHOT"
   | "VICTORY";
 
+export type NightStepId =
+  | "cupidon"
+  | "enfant-sauvage"
+  | "fratrie"
+  | "salvateur"
+  | "voyante"
+  | "renard"
+  | "loups"
+  | "loup-blanc"
+  | "grand-mechant-loup"
+  | "sorciere"
+  | "corbeau"
+  | "joueur-de-flute"
+  | null;
+
 export interface NightVictimEntry {
   playerId: string;
   pseudo: string;
   roleId: string | null;
-  cause: "loups" | "sorciere" | "chagrin" | "village" | "chasseur";
+  cause:
+    | "loups"
+    | "sorciere"
+    | "chagrin"
+    | "village"
+    | "chasseur"
+    | "tetanos";
+}
+
+export interface GameLogEntry {
+  id: string;
+  turn: number;
+  phase: "night" | "day" | "system";
+  text: string;
+  timestamp: string;
+}
+
+export type PlayerReactionType = "suspect" | "innocent" | "shock" | "wolf";
+
+export interface PlayerReactionEntry {
+  playerId: string;
+  reaction: PlayerReactionType;
+  sentAt: number;
 }
 
 export interface RoomGameState {
@@ -107,6 +156,30 @@ export interface RoomGameState {
   phaseDeadline: string | null;
   readyUserIds: string[];
   elderShieldUsed: boolean;
+  nightStep: NightStepId;
+  salvateurLastTargetId: string | null;
+  salvateurTargetId: string | null;
+  salvateurSavedTonight: boolean;
+  foxUsedWrongly: boolean;
+  foxCheckedTonight: boolean;
+  foxLastResult: { names: string[]; hasWolf: boolean } | null;
+  corbeauTargetId: string | null;
+  infectUsed: boolean;
+  infectTonight: boolean;
+  infectedPlayerIds: string[];
+  grandMechantSecondTargetId: string | null;
+  charmedPlayerIds: string[];
+  piperTargetsTonight: string[];
+  wildChildModelId: string | null;
+  wildChildTransformed: boolean;
+  servanteUsed: boolean;
+  rustyKnightPendingWolfId: string | null;
+  idiotSparedPlayerIds: string[];
+  loupBlancTargetId: string | null;
+  bearGrowledTonight: boolean;
+  elderShieldTriggeredTonight: boolean;
+  eventLog: GameLogEntry[];
+  reactions: Record<string, PlayerReactionEntry>;
 }
 
 export interface RoomRecord {

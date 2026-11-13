@@ -25,18 +25,21 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Utilitaires 3D et anti-sélection mobile pour la carte de rôle */
+/* Utilitaires 3D multi-navigateurs (Chrome, Edge, Safari iOS) et anti-sélection */
 .perspective-1200 {
   perspective: 1200px;
+  -webkit-perspective: 1200px;
 }
 
 .preserve-3d {
   transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
 }
 
 .backface-hidden {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 
 .no-callout {
@@ -175,7 +178,7 @@ body {
   }
 }
 
-/* Verre dépoli sombre style Apple (Dark Frosted Glass / visionOS) */
+/* Verre dépoli sombre style Apple (Dark Frosted Glass / visionOS) + transition Jour/Nuit */
 @layer components {
   .glass-panel {
     background:
@@ -193,6 +196,10 @@ body {
       inset 0 1px 0 rgba(255, 255, 255, 0.16),
       0 24px 56px -12px rgba(0, 0, 0, 0.72),
       0 6px 20px rgba(0, 0, 0, 0.36);
+    transition:
+      background 0.9s ease,
+      border-color 0.9s ease,
+      box-shadow 0.9s ease;
   }
 
   .glass-pill {
@@ -203,5 +210,29 @@ body {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.16),
       0 10px 26px rgba(0, 0, 0, 0.42);
+    transition:
+      background 0.9s ease,
+      border-color 0.9s ease;
+  }
+
+  [data-atmosphere="day"] .glass-panel {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(253, 224, 155, 0.085) 0%,
+        rgba(245, 158, 11, 0.025) 38%,
+        rgba(255, 255, 255, 0) 100%
+      ),
+      rgba(26, 18, 14, 0.58);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    box-shadow:
+      inset 0 1px 0 rgba(254, 243, 199, 0.22),
+      0 24px 56px -12px rgba(18, 10, 4, 0.68),
+      0 6px 22px rgba(217, 119, 6, 0.14);
+  }
+
+  [data-atmosphere="day"] .glass-pill {
+    background: rgba(30, 20, 14, 0.58);
+    border: 1px solid rgba(251, 191, 36, 0.22);
   }
 }

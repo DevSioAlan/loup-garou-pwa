@@ -23,18 +23,22 @@ interface ProfileModalProps {
 const PRESET_ICON_MAP: Record<AvatarPresetId, RoleIconName> = {
   wolf: "wolf",
   moon: "moon",
-  crown: "sparkles",
+  crown: "crown",
   eye: "eye",
   flask: "flask",
   flame: "flame",
   shield: "shield",
   sparkles: "sparkles",
+  bird: "bird",
+  fox: "dog",
+  music: "music",
+  sword: "sword",
 };
 
 /**
  * Modale mobile-first de profil rapide sans compte :
  * - Pseudo sauvegardé dans localStorage
- * - Galerie d'icônes animées Dark Fantasy + upload photo/GIF animé (1,5 Mo max)
+ * - Galerie étendue de 12 icônes animées & halo + upload photo/GIF/vidéo courte (4 Mo max)
  * - Champ code secret pour activer le Mode Owner
  */
 export function ProfileModal({
@@ -47,6 +51,7 @@ export function ProfileModal({
   const [secretInput, setSecretInput] = useState("");
   const [secretFeedback, setSecretFeedback] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   const handleNicknameChange = (value: string) => {
     onUpdateProfile({
@@ -68,6 +73,7 @@ export function ProfileModal({
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadError(null);
+    setUploadingFile(true);
 
     try {
       const dataUrl = await processAvatarFile(file);
@@ -78,16 +84,17 @@ export function ProfileModal({
       });
       if (!saved) {
         setUploadError(
-          "Espace local insuffisant pour sauvegarder ce fichier. Essayez un GIF plus léger."
+          "Fichier trop volumineux pour le stockage local du navigateur (~4 Mo encodés). Essayez un fichier un peu plus court."
         );
       }
     } catch (err) {
       setUploadError(
         err instanceof Error
           ? err.message
-          : "Impossible de charger cette image. Essayez un autre fichier."
+          : "Impossible de charger ce média. Essayez un autre fichier."
       );
     } finally {
+      setUploadingFile(false);
       e.target.value = "";
     }
   };
@@ -200,27 +207,28 @@ export function ProfileModal({
                       Avatar
                     </span>
                     <p className="text-[10px] text-slate-400">
-                      Icônes animées ou photo / GIF (1,5 Mo max)
+                      12 icônes animées, GIF ou boucle vidéo (.mp4/.webm, 4 Mo max)
                     </p>
                   </div>
                   <button
                     type="button"
+                    disabled={uploadingFile}
                     onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 transition-colors hover:bg-amber-400/20"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 transition-colors hover:bg-amber-400/20 disabled:opacity-50"
                   >
                     <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Photo / GIF</span>
+                    <span>{uploadingFile ? "Optimisation..." : "Photo / GIF / Vidéo"}</span>
                   </button>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/gif,image/jpeg,image/png,image/webp,image/*"
+                    accept="image/gif,image/jpeg,image/png,image/webp,image/*,video/mp4,video/webm"
                     onChange={handleFileChange}
                     className="hidden"
                   />
                 </div>
 
-                <div className="grid grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-4 gap-2">
                   {AVATAR_PRESETS.map((preset) => {
                     const selected =
                       profile.avatarType === "preset" &&
@@ -230,15 +238,25 @@ export function ProfileModal({
                         key={preset.id}
                         type="button"
                         onClick={() => handleSelectPreset(preset.id)}
-                        className={`flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all ${
+                        className={`relative flex flex-col items-center gap-1 overflow-hidden rounded-2xl border p-2 transition-all ${
                           selected
                             ? "border-amber-300/70 bg-white/12 shadow-[0_0_18px_rgba(212,175,55,0.22)]"
                             : "border-white/10 bg-white/[0.03] hover:border-white/25"
                         }`}
                       >
                         <div
-                          className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br ${preset.bgGradient} border border-white/15`}
+                          className={`relative flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br ${preset.bgGradient} border border-white/15`}
+                          style={{
+                            boxShadow: selected
+                              ? `0 0 16px ${preset.accent}55, inset 0 1px 0 rgba(255,255,255,0.2)`
+                              : `0 0 10px ${preset.accent}22`,
+                          }}
                         >
+                          <span
+                            aria-hidden="true"
+                            className="pointer-events-none absolute right-1 top-1 h-1 w-1 rounded-full animate-pulse"
+                            style={{ backgroundColor: preset.accent }}
+                          />
                           <RoleIcon
                             icon={PRESET_ICON_MAP[preset.id]}
                             color={preset.accent}

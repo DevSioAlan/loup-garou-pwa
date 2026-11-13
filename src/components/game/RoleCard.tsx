@@ -22,14 +22,25 @@ function getRoleAuraFamily(roleId: string): RoleAuraFamily {
   if (
     roleId === "loup-garou" ||
     roleId === "loup-garou-blanc" ||
-    roleId === "grand-mechant-loup"
+    roleId === "grand-mechant-loup" ||
+    roleId === "infect-pere-des-loups"
   ) {
     return "wolf";
   }
-  if (roleId === "voyante" || roleId === "sorciere" || roleId === "cupidon") {
+  if (
+    roleId === "voyante" ||
+    roleId === "sorciere" ||
+    roleId === "cupidon" ||
+    roleId === "corbeau" ||
+    roleId === "renard"
+  ) {
     return "mystic";
   }
-  if (roleId === "ange" || roleId === "enfant-sauvage") {
+  if (
+    roleId === "ange" ||
+    roleId === "enfant-sauvage" ||
+    roleId === "joueur-de-flute"
+  ) {
     return "solitaire";
   }
   return "village";
@@ -65,20 +76,8 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
   const stageOpacity = intense ? 1 : active ? 0.78 : 0.22;
   const stageScale = intense ? 1.06 : active ? 1 : 0.94;
 
-  // Palette personnalisée de rayonnement pour chaque rôle/camp
   const primaryGlow = role.aura.primary;
-  const secondaryGlow =
-    role.id === "loup-garou-blanc"
-      ? "#CBD5E1"
-      : family === "mystic"
-        ? "#6366F1"
-        : family === "village"
-          ? role.id === "idiot-du-village" || role.id === "salvateur"
-            ? "#34D399"
-            : "#D4AF37"
-          : family === "solitaire" && role.id === "ange"
-            ? "#BAE6FD"
-            : role.aura.secondary;
+  const secondaryGlow = role.aura.secondary;
 
   return (
     <motion.div
@@ -273,10 +272,97 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
                     background:
                       role.id === "ange"
                         ? "radial-gradient(circle at 64% 64%, rgba(192, 132, 252, 0.4) 0%, rgba(224, 242, 254, 0.28) 46%, transparent 74%)"
-                        : "radial-gradient(circle at 64% 64%, rgba(225, 29, 72, 0.36) 0%, rgba(212, 175, 55, 0.24) 48%, transparent 74%)",
+                        : role.id === "joueur-de-flute"
+                          ? "radial-gradient(circle at 64% 64%, rgba(16, 185, 129, 0.44) 0%, rgba(56, 189, 248, 0.3) 48%, transparent 74%)"
+                          : "radial-gradient(circle at 64% 64%, rgba(225, 29, 72, 0.36) 0%, rgba(212, 175, 55, 0.24) 48%, transparent 74%)",
                   }}
                 />
               </>
+            )}
+
+            {/* 5. SIGNATURES VISUELLES SPÉCIFIQUES À CHAQUE RÔLE */}
+            {role.id === "infect-pere-des-loups" && (
+              <motion.div
+                animate={{ scale: [0.95, 1.08, 0.95], opacity: [0.35, 0.72, 0.35] }}
+                transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-1 rounded-[2.6rem] blur-2xl"
+                style={{
+                  background:
+                    "radial-gradient(circle at 30% 70%, rgba(132, 204, 22, 0.42), rgba(22, 101, 52, 0.28) 50%, transparent 76%)",
+                }}
+              />
+            )}
+
+            {role.id === "corbeau" && (
+              <motion.div
+                animate={{ rotate: [0, 360] }}
+                transition={{ duration: 16, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-1 rounded-full border border-violet-400/25"
+                style={{
+                  boxShadow: "0 0 38px rgba(139, 92, 246, 0.38)",
+                }}
+              />
+            )}
+
+            {role.id === "joueur-de-flute" && (
+              <>
+                <motion.div
+                  animate={{ scale: [0.85, 1.24], opacity: [0.55, 0] }}
+                  transition={{ duration: 2.6, repeat: Infinity, ease: "easeOut" }}
+                  className="absolute inset-3 rounded-full border border-emerald-400/45"
+                />
+                <motion.div
+                  animate={{ scale: [0.85, 1.24], opacity: [0.55, 0] }}
+                  transition={{ duration: 2.6, delay: 1.3, repeat: Infinity, ease: "easeOut" }}
+                  className="absolute inset-3 rounded-full border border-sky-400/40"
+                />
+              </>
+            )}
+
+            {role.id === "renard" && (
+              <motion.div
+                animate={{ x: [-12, 12, -12], opacity: [0.38, 0.7, 0.38] }}
+                transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-2 rounded-[2.4rem] blur-2xl"
+                style={{
+                  background:
+                    "radial-gradient(circle at 70% 30%, rgba(249, 115, 22, 0.44), rgba(251, 146, 60, 0.18) 55%, transparent 76%)",
+                }}
+              />
+            )}
+
+            {role.id === "chevalier-epee-rouillee" && (
+              <motion.div
+                animate={{ rotate: [-6, 6, -6], opacity: [0.35, 0.65, 0.35] }}
+                transition={{ duration: 3.8, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-3 rounded-[2rem] border border-orange-500/35 blur-[1px]"
+                style={{
+                  boxShadow: "0 0 34px rgba(234, 88, 12, 0.34)",
+                }}
+              />
+            )}
+
+            {(role.id === "soeurs" || role.id === "freres") && (
+              <motion.div
+                animate={{ scale: [0.96, 1.06, 0.96], opacity: [0.42, 0.74, 0.42] }}
+                transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-4 rounded-[2.4rem] border"
+                style={{
+                  borderColor: `${role.aura.primary}44`,
+                  boxShadow: `0 0 32px ${role.aura.primary}40`,
+                }}
+              />
+            )}
+
+            {(role.id === "servante-devouee" || role.id === "montreur-dours") && (
+              <motion.div
+                animate={{ scale: [0.95, 1.08, 0.95], opacity: [0.4, 0.72, 0.4] }}
+                transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-2 rounded-full blur-2xl"
+                style={{
+                  background: `radial-gradient(circle, ${role.aura.primary}55, ${role.aura.secondary}26 55%, transparent 76%)`,
+                }}
+              />
             )}
           </motion.div>
         ) : (
@@ -309,6 +395,7 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
 export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
   const [isRevealed, setIsRevealed] = useState(false);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
+  const [pulseWave, setPulseWave] = useState(0);
 
   // Sécurité supplémentaire : fermeture automatique si le relâchement a lieu hors fenêtre
   useEffect(() => {
@@ -320,11 +407,15 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
     };
     window.addEventListener("pointerup", closeCard);
     window.addEventListener("pointercancel", closeCard);
+    window.addEventListener("touchend", closeCard);
+    window.addEventListener("touchcancel", closeCard);
     window.addEventListener("blur", closeCard);
 
     return () => {
       window.removeEventListener("pointerup", closeCard);
       window.removeEventListener("pointercancel", closeCard);
+      window.removeEventListener("touchend", closeCard);
+      window.removeEventListener("touchcancel", closeCard);
       window.removeEventListener("blur", closeCard);
     };
   }, [isRevealed]);
@@ -342,7 +433,8 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
 
   const handleRevealStart = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isRevealed) {
-      triggerHaptic(25);
+      triggerHaptic(28);
+      setPulseWave((n) => n + 1);
     }
     setIsRevealed(true);
     updatePointerTilt(e);
@@ -354,6 +446,9 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
   };
 
   const handleRevealEnd = () => {
+    if (isRevealed) {
+      triggerHaptic(14);
+    }
     setIsRevealed(false);
     setTilt({ x: 0, y: 0 });
   };
@@ -375,7 +470,23 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
         tilt={tilt}
       />
 
-      {/* Zone tactile 3D interactive */}
+      {/* Onde tactile universelle (sert de retour haptique visuel sur iOS/desktop) */}
+      <AnimatePresence>
+        {pulseWave > 0 && (
+          <motion.div
+            key={pulseWave}
+            aria-hidden="true"
+            initial={{ opacity: 0.55, scale: 0.96 }}
+            animate={{ opacity: 0, scale: 1.07 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.42, ease: "easeOut" }}
+            className="pointer-events-none absolute -inset-1 z-20 rounded-[28px] border"
+            style={{ borderColor: `${role.aura.primary}90` }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Zone tactile 3D interactive multi-navigateurs */}
       <div
         role="button"
         tabIndex={0}
@@ -390,7 +501,10 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
         onKeyDown={(e) => {
           if (e.key === " " || e.key === "Enter") {
             e.preventDefault();
-            if (!isRevealed) triggerHaptic(25);
+            if (!isRevealed) {
+              triggerHaptic(28);
+              setPulseWave((n) => n + 1);
+            }
             setIsRevealed(true);
           }
         }}
@@ -399,6 +513,10 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
             e.preventDefault();
             handleRevealEnd();
           }
+        }}
+        style={{
+          perspective: "1200px",
+          WebkitPerspective: "1200px",
         }}
         className="perspective-1200 no-callout select-none touch-pan-y cursor-pointer rounded-[26px] outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 focus-visible:ring-offset-4 focus-visible:ring-offset-[#07080D]"
       >
@@ -413,19 +531,27 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
               ? { type: "spring", stiffness: 250, damping: 24, mass: 0.84 }
               : { type: "spring", stiffness: 460, damping: 32, mass: 0.58 }
           }
+          style={{
+            transformStyle: "preserve-3d",
+            WebkitTransformStyle: "preserve-3d",
+          }}
           className="preserve-3d relative aspect-[3/4.2] w-full will-change-transform"
         >
           {/* FACE CACHÉE (0°) — Dos de carte Dark Frosted Glass */}
           <div
             className="backface-hidden glass-panel absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-[26px] p-5 transition-[border-color,box-shadow] duration-300"
-            style={
-              ambientWhenSelected
+            style={{
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+              transform: "rotateY(0deg) translateZ(1px)",
+              zIndex: isRevealed ? 0 : 2,
+              ...(ambientWhenSelected
                 ? {
                     borderColor: `${role.aura.primary}4A`,
                     boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 32px ${role.aura.primary}22, 0 24px 56px -12px rgba(0, 0, 0, 0.72)`,
                   }
-                : undefined
-            }
+                : {}),
+            }}
           >
             {/* Reflet vitré diagonal lors du déclenchement du retournement */}
             <motion.div
@@ -499,7 +625,10 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
           <div
             className={`backface-hidden glass-panel absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-[26px] border ${role.aura.borderClass} p-5`}
             style={{
-              transform: "rotateY(180deg)",
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+              transform: "rotateY(180deg) translateZ(1px)",
+              zIndex: isRevealed ? 2 : 0,
               background: `linear-gradient(165deg, ${role.aura.primary}1F 0%, rgba(12, 13, 18, 0.72) 48%, rgba(9, 10, 15, 0.86) 100%)`,
               boxShadow: isRevealed
                 ? `inset 0 1px 0 rgba(255, 255, 255, 0.22), ${role.aura.glowShadow}`
@@ -592,10 +721,17 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
               </p>
             </div>
 
-            {/* Indication de fermeture instantanée */}
-            <p className="relative z-10 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-300/75">
-              Relâchez pour masquer
-            </p>
+            {/* Bouton/indication de fermeture instantanée */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRevealEnd();
+              }}
+              className="relative z-10 rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-200/85 backdrop-blur-md transition hover:bg-black/60"
+            >
+              Relâcher ou toucher pour masquer
+            </button>
           </div>
         </motion.div>
       </div>

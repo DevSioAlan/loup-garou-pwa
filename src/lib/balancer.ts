@@ -29,12 +29,18 @@ const VARIANT_POOLS: Array<{
       "chasseur",
       "cupidon",
       "salvateur",
+      "corbeau",
+      "montreur-dours",
       "petite-fille",
       "ancien",
       "idiot-du-village",
     ],
-    specialWolves: ["loup-garou-blanc", "grand-mechant-loup"],
-    solitaires: ["enfant-sauvage", "ange"],
+    specialWolves: [
+      "loup-garou-blanc",
+      "infect-pere-des-loups",
+      "grand-mechant-loup",
+    ],
+    solitaires: ["enfant-sauvage", "joueur-de-flute", "ange"],
   },
   {
     label: "Nuit des Arcanes",
@@ -42,44 +48,62 @@ const VARIANT_POOLS: Array<{
       "voyante",
       "salvateur",
       "sorciere",
+      "renard",
+      "servante-devouee",
       "ancien",
       "chasseur",
       "petite-fille",
       "cupidon",
       "idiot-du-village",
     ],
-    specialWolves: ["grand-mechant-loup", "loup-garou-blanc"],
-    solitaires: ["ange", "enfant-sauvage"],
+    specialWolves: [
+      "infect-pere-des-loups",
+      "grand-mechant-loup",
+      "loup-garou-blanc",
+    ],
+    solitaires: ["joueur-de-flute", "ange", "enfant-sauvage"],
   },
   {
     label: "Chaos & Trahisons",
     villagePriority: [
       "voyante",
+      "corbeau",
       "chasseur",
+      "chevalier-epee-rouillee",
       "cupidon",
       "sorciere",
       "idiot-du-village",
+      "servante-devouee",
       "salvateur",
-      "petite-fille",
-      "ancien",
+      "renard",
     ],
-    specialWolves: ["loup-garou-blanc", "grand-mechant-loup"],
-    solitaires: ["enfant-sauvage", "ange"],
+    specialWolves: [
+      "loup-garou-blanc",
+      "infect-pere-des-loups",
+      "grand-mechant-loup",
+    ],
+    solitaires: ["enfant-sauvage", "joueur-de-flute", "ange"],
   },
   {
     label: "Bastion du Hameau",
     villagePriority: [
       "salvateur",
+      "montreur-dours",
       "voyante",
+      "chevalier-epee-rouillee",
       "ancien",
       "sorciere",
       "chasseur",
+      "corbeau",
       "petite-fille",
       "cupidon",
-      "idiot-du-village",
     ],
-    specialWolves: ["grand-mechant-loup", "loup-garou-blanc"],
-    solitaires: ["enfant-sauvage", "ange"],
+    specialWolves: [
+      "grand-mechant-loup",
+      "infect-pere-des-loups",
+      "loup-garou-blanc",
+    ],
+    solitaires: ["ange", "enfant-sauvage", "joueur-de-flute"],
   },
 ];
 
@@ -109,11 +133,13 @@ export function generateBalancedComposition(
   let normalWolves = totalWolves;
   if (playerCount >= 10) {
     const firstSpecial = variant.specialWolves[0];
-    if (firstSpecial === "loup-garou-blanc" && playerCount >= 10) {
-      composition["loup-garou-blanc"] = 1;
-      normalWolves -= 1;
-    } else if (firstSpecial === "grand-mechant-loup" && playerCount >= 10) {
-      composition["grand-mechant-loup"] = 1;
+    if (
+      firstSpecial &&
+      (firstSpecial === "loup-garou-blanc" ||
+        firstSpecial === "grand-mechant-loup" ||
+        firstSpecial === "infect-pere-des-loups")
+    ) {
+      composition[firstSpecial] = 1;
       normalWolves -= 1;
     }
   }

@@ -3,21 +3,27 @@ import {
   getSupabaseProjectRefPrefix,
 } from "@/lib/supabase/client";
 import {
+  appendGameLog,
   buildPhaseDeadline,
+  checkFoxTargets,
   createInitialGameState,
   dealRolesToPlayers,
+  didBearGrowl,
   encodeProfileAvatar,
   evaluateVictory,
   generateRoomCode,
-  isWolfRole,
+  isEffectiveWolf,
+  normalizeGameState,
   resolveDeathsWithCascade,
-  resolveNextNightPhase,
+  resolveNextNightStep,
   tallyTargetFromVoters,
 } from "@/lib/gameEngine";
 import type {
   GamePhase,
   NarratorMode,
+  NightVictimEntry,
   PlayerProfile,
+  PlayerReactionType,
   RoleComposition,
   RoomGameState,
   RoomPlayerRecord,
@@ -30,6 +36,7 @@ export {
   getAutoNarratorSpeech,
   getHumanNarratorScript,
   getPhaseLabel,
+  isEffectiveWolf,
   isWolfRole,
 } from "@/lib/gameEngine";
 
@@ -43,10 +50,7 @@ function normalizeRoom(row: Record<string, unknown>): RoomRecord {
     phase: (row.phase as GamePhase) ?? "LOBBY",
     turn_number: Number(row.turn_number ?? 1),
     role_composition: (row.role_composition ?? {}) as RoleComposition,
-    game_state: {
-      ...createInitialGameState(),
-      ...rawState,
-    },
+    game_state: normalizeGameState(rawState),
     created_at: String(row.created_at ?? ""),
     updated_at: String(row.updated_at ?? ""),
   };
@@ -107,9 +111,9 @@ async function upsertPlayerWithAvatarFallback(params: {
   const primaryAvatar = encodeProfileAvatar(params.profile);
   const fallbackAvatar = `preset:${params.profile.avatarPreset}`;
 
-  // Limite préventive à ~400 Ko pour éviter de bloquer PostgREST sur mobile
+  // Limite préventive à ~2,6 Mo (GIF/MP4/WebP) pour préserver la fluidité PostgREST
   const candidateAvatar =
-    primaryAvatar.length > 400_000 ? fallbackAvatar : primaryAvatar;
+    primaryAvatar.length > 2_600_000 ? fallbackAvatar : primaryAvatar;
 
   const { error } = await withRequestTimeout(
     supabase.from("room_players").upsert(
@@ -365,6 +369,11 @@ export async function startGameInRoom(
 
   const nextState: RoomGameState = {
     ...createInitialGameState(),
+    eventLog: appendGameLog([], {
+      turn: 1,
+      phase: "system",
+      text: "La partie commence sous la Lune de Sang.",
+    }),
     phaseDeadline:
       room.narrator_mode === "auto"
         ? buildPhaseDeadline("ROLE_REVEAL")
@@ -381,6 +390,52 @@ export async function startGameInRoom(
     .eq("id", room.id);
 }
 
+function resetNightTransientState(state: RoomGameState): RoomGameState {
+  return {
+    ...state,
+    wolfTargetId: null,
+    witchSaveTonight: false,
+    witchKillTargetId: null,
+    seerInspectedId: null,
+    readyUserIds: [],
+    salvateurTargetId: null,
+    salvateurSavedTonight: false,
+    foxCheckedTonight: false,
+    foxLastResult: null,
+    corbeauTargetId: null,
+    infectTonight: false,
+    grandMechantSecondTargetId: null,
+    piperTargetsTonight: [],
+    loupBlancTargetId: null,
+    bearGrowledTonight: false,
+    elderShieldTriggeredTonight: false,
+    nightStep: null,
+  };
+}
+
+function assertAliveTarget(
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetId: string,
+  options?: { allowSelf?: boolean }
+): { actor: RoomPlayerRecord; target: RoomPlayerRecord } {
+  const actor = players.find((p) => p.id === actorId);
+  if (!actor || !actor.is_alive) {
+    throw new Error("Un joueur éliminé ne peut pas utiliser de pouvoir.");
+  }
+
+  const target = players.find((p) => p.id === targetId);
+  if (!target || !target.is_alive) {
+    throw new Error("Impossible de cibler un joueur déjà éliminé.");
+  }
+
+  if (!options?.allowSelf && actor.id === target.id) {
+    throw new Error("Vous ne pouvez pas vous cibler vous-même.");
+  }
+
+  return { actor, target };
+}
+
 async function clearPlayerVotes(roomId: string): Promise<void> {
   const supabase = createClient();
   await supabase
@@ -390,78 +445,80 @@ async function clearPlayerVotes(roomId: string): Promise<void> {
 }
 
 /**
- * Fait avancer la machine à états vers la phase suivante en résolvant les actions.
+ * Fait avancer la machine à états vers la phase (ou sous-étape de nuit) suivante.
  */
 export async function advanceRoomPhase(
   room: RoomRecord,
   players: RoomPlayerRecord[]
 ): Promise<void> {
   const supabase = createClient();
-  const state = { ...room.game_state };
+  const state = normalizeGameState(room.game_state);
   const isAuto = room.narrator_mode === "auto";
 
   if (room.phase === "ROLE_REVEAL") {
-    const nextPhase = resolveNextNightPhase(
+    const cleaned = resetNightTransientState(state);
+    const nextStepInfo = resolveNextNightStep(
       "ROLE_REVEAL",
+      null,
       players,
+      cleaned,
       room.turn_number
     );
     await clearPlayerVotes(room.id);
+
+    if (!nextStepInfo) {
+      await resolveNightAndEnterDay(room, players, cleaned);
+      return;
+    }
+
     await supabase
       .from("rooms")
       .update({
-        phase: nextPhase,
+        phase: nextStepInfo.phase,
         game_state: {
-          ...state,
-          wolfTargetId: null,
-          witchSaveTonight: false,
-          witchKillTargetId: null,
-          seerInspectedId: null,
-          readyUserIds: [],
-          phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase) : null,
+          ...cleaned,
+          nightStep: nextStepInfo.nightStep,
+          phaseDeadline: isAuto
+            ? buildPhaseDeadline(nextStepInfo.phase, nextStepInfo.nightStep)
+            : null,
         },
       })
       .eq("id", room.id);
     return;
   }
 
-  if (room.phase === "NIGHT_CUPIDON" || room.phase === "NIGHT_SEER") {
-    const nextPhase = resolveNextNightPhase(
+  if (room.phase.startsWith("NIGHT_")) {
+    let workingState: RoomGameState = { ...state };
+
+    if (
+      workingState.nightStep === "loups" ||
+      (!workingState.nightStep && room.phase === "NIGHT_WEREWOLVES")
+    ) {
+      const wolfVoters = players.filter(
+        (p) => p.is_alive && isEffectiveWolf(p, workingState)
+      );
+      const { targetId } = tallyTargetFromVoters(wolfVoters);
+      const validTarget = players.find(
+        (p) => p.id === targetId && p.is_alive
+      );
+      workingState = {
+        ...workingState,
+        wolfTargetId: validTarget ? validTarget.id : null,
+        infectTonight:
+          Boolean(workingState.infectTonight) && Boolean(validTarget),
+      };
+    }
+
+    const nextStepInfo = resolveNextNightStep(
       room.phase,
+      workingState.nightStep,
       players,
-      room.turn_number
-    );
-    await clearPlayerVotes(room.id);
-    await supabase
-      .from("rooms")
-      .update({
-        phase: nextPhase,
-        game_state: {
-          ...state,
-          phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase) : null,
-        },
-      })
-      .eq("id", room.id);
-    return;
-  }
-
-  if (room.phase === "NIGHT_WEREWOLVES") {
-    const wolfVoters = players.filter((p) => p.is_alive && isWolfRole(p.role));
-    const { targetId } = tallyTargetFromVoters(wolfVoters);
-
-    const nextState: RoomGameState = {
-      ...state,
-      wolfTargetId: targetId,
-    };
-
-    const nextPhase = resolveNextNightPhase(
-      "NIGHT_WEREWOLVES",
-      players,
+      workingState,
       room.turn_number
     );
 
-    if (nextPhase === "DAY_ANNOUNCEMENT") {
-      await resolveNightAndEnterDay(room, players, nextState);
+    if (!nextStepInfo) {
+      await resolveNightAndEnterDay(room, players, workingState);
       return;
     }
 
@@ -469,18 +526,17 @@ export async function advanceRoomPhase(
     await supabase
       .from("rooms")
       .update({
-        phase: nextPhase,
+        phase: nextStepInfo.phase,
         game_state: {
-          ...nextState,
-          phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase) : null,
+          ...workingState,
+          nightStep: nextStepInfo.nightStep,
+          readyUserIds: [],
+          phaseDeadline: isAuto
+            ? buildPhaseDeadline(nextStepInfo.phase, nextStepInfo.nightStep)
+            : null,
         },
       })
       .eq("id", room.id);
-    return;
-  }
-
-  if (room.phase === "NIGHT_WITCH") {
-    await resolveNightAndEnterDay(room, players, state);
     return;
   }
 
@@ -514,6 +570,11 @@ export async function advanceRoomPhase(
           game_state: {
             ...state,
             ...victory,
+            eventLog: appendGameLog(state.eventLog, {
+              turn: room.turn_number,
+              phase: "system",
+              text: `${victory.winnerTitle ?? "Fin de partie"} !`,
+            }),
             phaseDeadline: null,
           },
         })
@@ -536,63 +597,128 @@ export async function advanceRoomPhase(
   }
 
   if (room.phase === "DAY_VOTE") {
-    const aliveVoters = players.filter((p) => p.is_alive);
-    const { targetId, isTie } = tallyTargetFromVoters(aliveVoters);
+    const aliveVoters = players.filter(
+      (p) => p.is_alive && !state.idiotSparedPlayerIds.includes(p.id)
+    );
+    const activeCorbeauTarget =
+      state.corbeauTargetId &&
+      players.some((p) => p.id === state.corbeauTargetId && p.is_alive)
+        ? state.corbeauTargetId
+        : null;
+
+    const { targetId, isTie } = tallyTargetFromVoters(
+      aliveVoters,
+      activeCorbeauTarget,
+      2
+    );
 
     if (!targetId) {
       const nextTurn = room.turn_number + 1;
-      const nextNight = resolveNextNightPhase("DAY_VOTE", players, nextTurn);
+      const announcement = isTie
+        ? "Égalité lors du vote : personne n'a été exécuté aujourd'hui."
+        : "Aucun vote exprimé : le village garde le silence.";
+      const baseNextState: RoomGameState = {
+        ...resetNightTransientState(state),
+        nightVictims: [],
+        lastAnnouncement: announcement,
+        eventLog: appendGameLog(state.eventLog, {
+          turn: room.turn_number,
+          phase: "day",
+          text: `Jour ${room.turn_number} : ${announcement}`,
+        }),
+      };
+
+      const nextStepInfo = resolveNextNightStep(
+        "DAY_VOTE",
+        null,
+        players,
+        baseNextState,
+        nextTurn
+      );
       await clearPlayerVotes(room.id);
+
+      if (!nextStepInfo) {
+        await resolveNightAndEnterDay(
+          { ...room, turn_number: nextTurn },
+          players,
+          baseNextState
+        );
+        return;
+      }
+
       await supabase
         .from("rooms")
         .update({
-          phase: nextNight,
+          phase: nextStepInfo.phase,
           turn_number: nextTurn,
           game_state: {
-            ...state,
-            wolfTargetId: null,
-            witchSaveTonight: false,
-            witchKillTargetId: null,
-            seerInspectedId: null,
-            nightVictims: [],
-            lastAnnouncement: isTie
-              ? "Égalité lors du vote : personne n'a été exécuté aujourd'hui."
-              : "Aucun vote exprimé : le village garde le silence.",
-            phaseDeadline: isAuto ? buildPhaseDeadline(nextNight) : null,
+            ...baseNextState,
+            nightStep: nextStepInfo.nightStep,
+            phaseDeadline: isAuto
+              ? buildPhaseDeadline(nextStepInfo.phase, nextStepInfo.nightStep)
+              : null,
           },
         })
         .eq("id", room.id);
       return;
     }
 
-    const votedTarget = players.find((p) => p.id === targetId);
-    if (votedTarget?.role === "idiot-du-village") {
+    const votedTarget = players.find((p) => p.id === targetId && p.is_alive);
+    if (
+      votedTarget?.role === "idiot-du-village" &&
+      !state.idiotSparedPlayerIds.includes(votedTarget.id)
+    ) {
       const nextTurn = room.turn_number + 1;
-      const nextNight = resolveNextNightPhase("DAY_VOTE", players, nextTurn);
+      const announcement = `${votedTarget.pseudo} est l'Idiot du Village ! Le hameau l'épargne (droit de vote retiré).`;
+      const baseNextState: RoomGameState = {
+        ...resetNightTransientState(state),
+        idiotSparedPlayerIds: [...state.idiotSparedPlayerIds, votedTarget.id],
+        nightVictims: [],
+        lastAnnouncement: announcement,
+        eventLog: appendGameLog(state.eventLog, {
+          turn: room.turn_number,
+          phase: "day",
+          text: `Jour ${room.turn_number} : ${votedTarget.pseudo} a été épargné par le conseil.`,
+        }),
+      };
+
+      const nextStepInfo = resolveNextNightStep(
+        "DAY_VOTE",
+        null,
+        players,
+        baseNextState,
+        nextTurn
+      );
       await clearPlayerVotes(room.id);
+      const targetPhase = nextStepInfo?.phase ?? "DAY_ANNOUNCEMENT";
+      const targetStep = nextStepInfo?.nightStep ?? null;
+
       await supabase
         .from("rooms")
         .update({
-          phase: nextNight,
+          phase: targetPhase,
           turn_number: nextTurn,
           game_state: {
-            ...state,
-            wolfTargetId: null,
-            witchSaveTonight: false,
-            witchKillTargetId: null,
-            seerInspectedId: null,
-            lastAnnouncement: `${votedTarget.pseudo} est l'Idiot du Village ! Le hameau l'épargne.`,
-            phaseDeadline: isAuto ? buildPhaseDeadline(nextNight) : null,
+            ...baseNextState,
+            nightStep: targetStep,
+            phaseDeadline: isAuto
+              ? buildPhaseDeadline(targetPhase, targetStep)
+              : null,
           },
         })
         .eq("id", room.id);
       return;
     }
 
-    const { updatedPlayers, victims, hunterPendingPlayerId, elderShieldTriggered } =
-      resolveDeathsWithCascade(players, state, [
-        { playerId: targetId, cause: "village" },
-      ]);
+    const {
+      updatedPlayers,
+      victims,
+      hunterPendingPlayerId,
+      elderShieldUsedNext,
+      wildChildTransformedNow,
+    } = resolveDeathsWithCascade(players, state, [
+      { playerId: targetId, cause: "village" },
+    ]);
 
     await Promise.all(
       victims.map((v) =>
@@ -608,6 +734,20 @@ export async function advanceRoomPhase(
       victims.length > 1 ? "ont été éliminés" : "a été éliminé"
     } par le village.`;
 
+    const stateAfterVote: RoomGameState = {
+      ...state,
+      elderShieldUsed: elderShieldUsedNext,
+      wildChildTransformed:
+        state.wildChildTransformed || wildChildTransformedNow,
+      nightVictims: victims,
+      lastAnnouncement: announcement,
+      eventLog: appendGameLog(state.eventLog, {
+        turn: room.turn_number,
+        phase: "day",
+        text: `Jour ${room.turn_number} : ${announcement}`,
+      }),
+    };
+
     if (hunterPendingPlayerId) {
       await clearPlayerVotes(room.id);
       await supabase
@@ -615,10 +755,7 @@ export async function advanceRoomPhase(
         .update({
           phase: "HUNTER_SHOT",
           game_state: {
-            ...state,
-            elderShieldUsed: elderShieldTriggered,
-            nightVictims: victims,
-            lastAnnouncement: announcement,
+            ...stateAfterVote,
             hunterPendingPlayerId,
             hunterReturnPhase: "NIGHT",
             phaseDeadline: isAuto ? buildPhaseDeadline("HUNTER_SHOT") : null,
@@ -630,7 +767,7 @@ export async function advanceRoomPhase(
 
     const victory = evaluateVictory(
       updatedPlayers,
-      state,
+      stateAfterVote,
       room.turn_number,
       victims.map((v) => v.playerId)
     );
@@ -641,11 +778,13 @@ export async function advanceRoomPhase(
         .update({
           phase: "VICTORY",
           game_state: {
-            ...state,
+            ...stateAfterVote,
             ...victory,
-            elderShieldUsed: elderShieldTriggered,
-            nightVictims: victims,
-            lastAnnouncement: announcement,
+            eventLog: appendGameLog(stateAfterVote.eventLog, {
+              turn: room.turn_number,
+              phase: "system",
+              text: `${victory.winnerTitle ?? "Fin de partie"} !`,
+            }),
             phaseDeadline: null,
           },
         })
@@ -654,23 +793,27 @@ export async function advanceRoomPhase(
     }
 
     const nextTurn = room.turn_number + 1;
-    const nextNight = resolveNextNightPhase("DAY_VOTE", updatedPlayers, nextTurn);
+    const cleanedNext = resetNightTransientState(stateAfterVote);
+    const nextStepInfo = resolveNextNightStep(
+      "DAY_VOTE",
+      null,
+      updatedPlayers,
+      cleanedNext,
+      nextTurn
+    );
     await clearPlayerVotes(room.id);
+    const nextPhase = nextStepInfo?.phase ?? "DAY_ANNOUNCEMENT";
+    const nextStep = nextStepInfo?.nightStep ?? null;
+
     await supabase
       .from("rooms")
       .update({
-        phase: nextNight,
+        phase: nextPhase,
         turn_number: nextTurn,
         game_state: {
-          ...state,
-          elderShieldUsed: elderShieldTriggered,
-          wolfTargetId: null,
-          witchSaveTonight: false,
-          witchKillTargetId: null,
-          seerInspectedId: null,
-          nightVictims: victims,
-          lastAnnouncement: announcement,
-          phaseDeadline: isAuto ? buildPhaseDeadline(nextNight) : null,
+          ...cleanedNext,
+          nightStep: nextStep,
+          phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase, nextStep) : null,
         },
       })
       .eq("id", room.id);
@@ -713,22 +856,31 @@ export async function advanceRoomPhase(
     }
 
     const nextTurn = room.turn_number + 1;
-    const nextNight = resolveNextNightPhase("DAY_VOTE", players, nextTurn);
+    const cleanedNext = {
+      ...resetNightTransientState(state),
+      hunterPendingPlayerId: null,
+      hunterReturnPhase: null,
+    };
+    const nextStepInfo = resolveNextNightStep(
+      "DAY_VOTE",
+      null,
+      players,
+      cleanedNext,
+      nextTurn
+    );
     await clearPlayerVotes(room.id);
+    const nextPhase = nextStepInfo?.phase ?? "DAY_ANNOUNCEMENT";
+    const nextStep = nextStepInfo?.nightStep ?? null;
+
     await supabase
       .from("rooms")
       .update({
-        phase: nextNight,
+        phase: nextPhase,
         turn_number: nextTurn,
         game_state: {
-          ...state,
-          hunterPendingPlayerId: null,
-          hunterReturnPhase: null,
-          wolfTargetId: null,
-          witchSaveTonight: false,
-          witchKillTargetId: null,
-          seerInspectedId: null,
-          phaseDeadline: isAuto ? buildPhaseDeadline(nextNight) : null,
+          ...cleanedNext,
+          nightStep: nextStep,
+          phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase, nextStep) : null,
         },
       })
       .eq("id", room.id);
@@ -742,24 +894,101 @@ async function resolveNightAndEnterDay(
 ): Promise<void> {
   const supabase = createClient();
   const isAuto = room.narrator_mode === "auto";
-
   const initialDeaths: Array<{
     playerId: string;
-    cause: "loups" | "sorciere";
+    cause: NightVictimEntry["cause"];
   }> = [];
 
-  if (state.wolfTargetId && !state.witchSaveTonight) {
-    initialDeaths.push({ playerId: state.wolfTargetId, cause: "loups" });
-  }
-  if (state.witchKillTargetId) {
-    initialDeaths.push({
-      playerId: state.witchKillTargetId,
-      cause: "sorciere",
-    });
+  let salvateurSavedTonight = false;
+  let infectUsedNext = state.infectUsed;
+  const infectedPlayerIdsNext = [...state.infectedPlayerIds];
+
+  // Tétanos du Chevalier à l'Épée Rouillée contracté lors de la nuit précédente
+  if (state.rustyKnightPendingWolfId) {
+    const pendingWolf = players.find(
+      (p) => p.id === state.rustyKnightPendingWolfId && p.is_alive
+    );
+    if (pendingWolf) {
+      initialDeaths.push({ playerId: pendingWolf.id, cause: "tetanos" });
+    }
   }
 
-  const { updatedPlayers, victims, hunterPendingPlayerId, elderShieldTriggered } =
-    resolveDeathsWithCascade(players, state, initialDeaths);
+  // Attaque principale de la meute (ou conversion de l'Infect Père des Loups)
+  if (state.wolfTargetId) {
+    const wolfVictim = players.find(
+      (p) => p.id === state.wolfTargetId && p.is_alive
+    );
+    if (wolfVictim) {
+      if (state.salvateurTargetId === wolfVictim.id) {
+        salvateurSavedTonight = true;
+      } else if (state.witchSaveTonight) {
+        // Sauvé par la potion de vie
+      } else if (
+        state.infectTonight &&
+        !state.infectUsed &&
+        !isEffectiveWolf(wolfVictim, state)
+      ) {
+        infectUsedNext = true;
+        if (!infectedPlayerIdsNext.includes(wolfVictim.id)) {
+          infectedPlayerIdsNext.push(wolfVictim.id);
+        }
+      } else {
+        initialDeaths.push({ playerId: wolfVictim.id, cause: "loups" });
+      }
+    }
+  }
+
+  // Trahison du Loup-Garou Blanc
+  if (state.loupBlancTargetId) {
+    const whiteVictim = players.find(
+      (p) => p.id === state.loupBlancTargetId && p.is_alive
+    );
+    if (whiteVictim) {
+      if (state.salvateurTargetId === whiteVictim.id) {
+        salvateurSavedTonight = true;
+      } else {
+        initialDeaths.push({ playerId: whiteVictim.id, cause: "loups" });
+      }
+    }
+  }
+
+  // Deuxième proie du Grand Méchant Loup
+  if (
+    state.grandMechantSecondTargetId &&
+    state.grandMechantSecondTargetId !== state.wolfTargetId &&
+    state.grandMechantSecondTargetId !== state.loupBlancTargetId
+  ) {
+    const secondVictim = players.find(
+      (p) => p.id === state.grandMechantSecondTargetId && p.is_alive
+    );
+    if (secondVictim) {
+      if (state.salvateurTargetId === secondVictim.id) {
+        salvateurSavedTonight = true;
+      } else {
+        initialDeaths.push({ playerId: secondVictim.id, cause: "loups" });
+      }
+    }
+  }
+
+  // Potion de mort de la Sorcière (contourne le Salvateur)
+  if (state.witchKillTargetId) {
+    const poisonVictim = players.find(
+      (p) => p.id === state.witchKillTargetId && p.is_alive
+    );
+    if (poisonVictim) {
+      initialDeaths.push({ playerId: poisonVictim.id, cause: "sorciere" });
+    }
+  }
+
+  const {
+    updatedPlayers,
+    victims,
+    hunterPendingPlayerId,
+    elderShieldTriggered,
+    elderShieldUsedNext,
+    rustyKnightPendingWolfIdNext,
+    wildChildTransformedNow,
+  } = resolveDeathsWithCascade(players, state, initialDeaths);
 
   await Promise.all(
     victims.map((v) =>
@@ -770,17 +999,90 @@ async function resolveNightAndEnterDay(
     )
   );
 
-  const announcement =
-    victims.length === 0
-      ? "Miracle à l'aube : personne n'a péri cette nuit !"
-      : `Cette nuit, le village a perdu : ${victims
-          .map((v) => v.pseudo)
-          .join(" et ")}.`;
+  const postNightBaseState: RoomGameState = {
+    ...state,
+    nightStep: null,
+    salvateurLastTargetId: state.salvateurTargetId,
+    salvateurTargetId: null,
+    salvateurSavedTonight,
+    elderShieldUsed: elderShieldUsedNext,
+    elderShieldTriggeredTonight: elderShieldTriggered,
+    rustyKnightPendingWolfId: rustyKnightPendingWolfIdNext,
+    infectUsed: infectUsedNext,
+    infectedPlayerIds: infectedPlayerIdsNext,
+    wildChildTransformed: state.wildChildTransformed || wildChildTransformedNow,
+    corbeauTargetId:
+      state.corbeauTargetId &&
+      updatedPlayers.some((p) => p.id === state.corbeauTargetId && p.is_alive)
+        ? state.corbeauTargetId
+        : null,
+  };
+
+  const bearGrowledTonight = didBearGrowl(updatedPlayers, postNightBaseState);
+  const corbeauTarget = postNightBaseState.corbeauTargetId
+    ? updatedPlayers.find((p) => p.id === postNightBaseState.corbeauTargetId)
+    : null;
+
+  let announcement: string;
+  if (victims.length === 0) {
+    if (elderShieldTriggered || salvateurSavedTonight || state.witchSaveTonight) {
+      announcement =
+        "Grâce à une intervention dans l'ombre, personne n'a péri cette nuit !";
+    } else {
+      announcement = "Miracle à l'aube : personne n'a péri cette nuit !";
+    }
+  } else {
+    announcement = `Cette nuit, le village a perdu : ${victims
+      .map((v) => v.pseudo)
+      .join(" et ")}.`;
+  }
+
+  if (bearGrowledTonight) {
+    announcement += " L'ours grogne sourdement au réveil du village !";
+  }
+  if (corbeauTarget) {
+    announcement += ` Une plume du Corbeau désigne ${corbeauTarget.pseudo} (+2 voix).`;
+  }
+
+  let nextLog = appendGameLog(postNightBaseState.eventLog, {
+    turn: room.turn_number,
+    phase: "night",
+    text:
+      victims.length === 0
+        ? `Nuit ${room.turn_number} : Aucune victime au lever du jour.`
+        : `Nuit ${room.turn_number} : ${victims
+            .map((v) => v.pseudo)
+            .join(" et ")} ${victims.length > 1 ? "ont péri" : "a péri"}.`,
+  });
+
+  if (bearGrowledTonight) {
+    nextLog = appendGameLog(nextLog, {
+      turn: room.turn_number,
+      phase: "day",
+      text: "Aube : Un grognement d'ours retentit dans le village.",
+    });
+  }
+
+  if (corbeauTarget) {
+    nextLog = appendGameLog(nextLog, {
+      turn: room.turn_number,
+      phase: "day",
+      text: `Aube : ${corbeauTarget.pseudo} porte la marque du Corbeau (+2 voix).`,
+    });
+  }
+
+  const finalState: RoomGameState = {
+    ...postNightBaseState,
+    bearGrowledTonight,
+    nightVictims: victims,
+    lastAnnouncement: announcement,
+    eventLog: nextLog,
+  };
 
   if (!hunterPendingPlayerId) {
     const victory = evaluateVictory(
       updatedPlayers,
-      state,
+      finalState,
       room.turn_number,
       victims.map((v) => v.playerId)
     );
@@ -791,11 +1093,13 @@ async function resolveNightAndEnterDay(
         .update({
           phase: "VICTORY",
           game_state: {
-            ...state,
+            ...finalState,
             ...victory,
-            elderShieldUsed: elderShieldTriggered,
-            nightVictims: victims,
-            lastAnnouncement: announcement,
+            eventLog: appendGameLog(finalState.eventLog, {
+              turn: room.turn_number,
+              phase: "system",
+              text: `${victory.winnerTitle ?? "Fin de partie"} !`,
+            }),
             phaseDeadline: null,
           },
         })
@@ -810,10 +1114,7 @@ async function resolveNightAndEnterDay(
     .update({
       phase: "DAY_ANNOUNCEMENT",
       game_state: {
-        ...state,
-        elderShieldUsed: elderShieldTriggered,
-        nightVictims: victims,
-        lastAnnouncement: announcement,
+        ...finalState,
         hunterPendingPlayerId,
         phaseDeadline: isAuto ? buildPhaseDeadline("DAY_ANNOUNCEMENT") : null,
       },
@@ -825,17 +1126,71 @@ export async function submitVoteTarget(
   playerId: string,
   targetPlayerId: string
 ): Promise<void> {
+  if (playerId === targetPlayerId) {
+    throw new Error("Vous ne pouvez pas voter pour vous-même.");
+  }
+
   const supabase = createClient();
+  const { data: rows } = await supabase
+    .from("room_players")
+    .select("id, is_alive")
+    .in("id", [playerId, targetPlayerId]);
+
+  const actor = rows?.find((r) => r.id === playerId);
+  const target = rows?.find((r) => r.id === targetPlayerId);
+  if (!actor || !actor.is_alive) {
+    throw new Error("Un joueur éliminé ne peut pas voter.");
+  }
+  if (!target || !target.is_alive) {
+    throw new Error("Impossible de voter pour un joueur déjà éliminé.");
+  }
+
   await supabase
     .from("room_players")
     .update({ has_voted: true, target_id: targetPlayerId })
     .eq("id", playerId);
 }
 
+export async function markPlayerReady(
+  room: RoomRecord,
+  userId: string
+): Promise<void> {
+  const state = normalizeGameState(room.game_state);
+  if (state.readyUserIds.includes(userId)) return;
+
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...state,
+        readyUserIds: [...state.readyUserIds, userId],
+      },
+    })
+    .eq("id", room.id);
+}
+
 export async function submitCupidonLovers(
   room: RoomRecord,
-  loverIds: [string, string]
+  loverIds: [string, string],
+  players?: RoomPlayerRecord[],
+  actorId?: string
 ): Promise<void> {
+  if (loverIds[0] === loverIds[1]) {
+    throw new Error("Sélectionnez deux joueurs distincts.");
+  }
+  if (actorId && (loverIds[0] === actorId || loverIds[1] === actorId)) {
+    throw new Error("Cupidon ne peut pas se désigner lui-même.");
+  }
+  if (players) {
+    const valid = loverIds.every((id) =>
+      players.some((p) => p.id === id && p.is_alive)
+    );
+    if (!valid) {
+      throw new Error("Les deux amoureux doivent être vivants.");
+    }
+  }
+
   const supabase = createClient();
   await supabase
     .from("rooms")
@@ -849,10 +1204,63 @@ export async function submitCupidonLovers(
     .eq("id", room.id);
 }
 
-export async function submitSeerInspection(
+export async function submitWildChildModel(
   room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
   targetPlayerId: string
 ): Promise<void> {
+  assertAliveTarget(players, actorId, targetPlayerId, { allowSelf: false });
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        wildChildModelId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitSalvateurTarget(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetPlayerId: string
+): Promise<void> {
+  assertAliveTarget(players, actorId, targetPlayerId, { allowSelf: true });
+  if (room.game_state.salvateurLastTargetId === targetPlayerId) {
+    throw new Error(
+      "Le Salvateur ne peut pas protéger la même personne deux nuits de suite."
+    );
+  }
+
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        salvateurTargetId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitSeerInspection(
+  room: RoomRecord,
+  targetPlayerId: string,
+  players?: RoomPlayerRecord[],
+  actorId?: string
+): Promise<void> {
+  if (actorId && targetPlayerId === actorId) {
+    throw new Error("Vous ne pouvez pas vous sonder vous-même.");
+  }
+  if (players && !players.some((p) => p.id === targetPlayerId && p.is_alive)) {
+    throw new Error("Impossible d'inspecter un joueur éliminé.");
+  }
+
   const supabase = createClient();
   await supabase
     .from("rooms")
@@ -865,10 +1273,121 @@ export async function submitSeerInspection(
     .eq("id", room.id);
 }
 
+export async function submitRenardTargets(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  centerPlayerId: string
+): Promise<void> {
+  if (room.game_state.foxUsedWrongly) {
+    throw new Error("Le Renard a déjà perdu son flair.");
+  }
+  assertAliveTarget(players, actorId, centerPlayerId, { allowSelf: false });
+
+  const result = checkFoxTargets(players, centerPlayerId, room.game_state);
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        foxCheckedTonight: true,
+        foxUsedWrongly: !result.hasWolf,
+        foxLastResult: {
+          names: result.names,
+          hasWolf: result.hasWolf,
+        },
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitWolfInfectToggle(
+  room: RoomRecord,
+  infect: boolean
+): Promise<void> {
+  if (infect && room.game_state.infectUsed) {
+    throw new Error("L'infection de l'Infect Père a déjà été utilisée.");
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        infectTonight: infect,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitLoupBlancTarget(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetPlayerId: string | null
+): Promise<void> {
+  if (targetPlayerId) {
+    const { target } = assertAliveTarget(players, actorId, targetPlayerId, {
+      allowSelf: false,
+    });
+    if (!isEffectiveWolf(target, room.game_state)) {
+      throw new Error(
+        "Le Loup-Garou Blanc ne peut éliminer qu'un autre Loup-Garou."
+      );
+    }
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        loupBlancTargetId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitGrandMechantTarget(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetPlayerId: string | null
+): Promise<void> {
+  if (targetPlayerId) {
+    assertAliveTarget(players, actorId, targetPlayerId, { allowSelf: false });
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        grandMechantSecondTargetId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
 export async function submitWitchDecision(
   room: RoomRecord,
-  decision: { saveWolfVictim: boolean; killTargetId: string | null }
+  decision: { saveWolfVictim: boolean; killTargetId: string | null },
+  players?: RoomPlayerRecord[],
+  actorId?: string
 ): Promise<void> {
+  if (decision.killTargetId) {
+    if (actorId && decision.killTargetId === actorId) {
+      throw new Error("La Sorcière ne peut pas s'empoisonner elle-même.");
+    }
+    if (
+      players &&
+      !players.some((p) => p.id === decision.killTargetId && p.is_alive)
+    ) {
+      throw new Error("Impossible d'empoisonner un joueur déjà éliminé.");
+    }
+  }
+
   const supabase = createClient();
   const nextState: RoomGameState = {
     ...room.game_state,
@@ -885,19 +1404,149 @@ export async function submitWitchDecision(
     .eq("id", room.id);
 }
 
+export async function submitCorbeauTarget(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetPlayerId: string
+): Promise<void> {
+  assertAliveTarget(players, actorId, targetPlayerId, { allowSelf: false });
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        corbeauTargetId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitPiperTargets(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetIds: string[]
+): Promise<void> {
+  const unique = Array.from(new Set(targetIds)).slice(0, 2);
+  if (unique.length === 0) {
+    throw new Error("Choisissez au moins un joueur à charmer.");
+  }
+
+  for (const id of unique) {
+    assertAliveTarget(players, actorId, id, { allowSelf: false });
+  }
+
+  const nextCharmed = Array.from(
+    new Set([...room.game_state.charmedPlayerIds, ...unique])
+  );
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        charmedPlayerIds: nextCharmed,
+        piperTargetsTonight: unique,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitServanteClaim(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  victimPlayerId: string
+): Promise<void> {
+  const actor = players.find((p) => p.id === actorId && p.is_alive);
+  if (!actor || actor.role !== "servante-devouee") {
+    throw new Error("Seule la Servante Dévouée vivante peut agir ainsi.");
+  }
+  if (room.game_state.servanteUsed) {
+    throw new Error("Vous avez déjà endossé un rôle dans cette partie.");
+  }
+
+  const victim = players.find((p) => p.id === victimPlayerId && !p.is_alive);
+  if (!victim || !victim.role) {
+    throw new Error("Ce rôle ne peut pas être repris.");
+  }
+
+  const supabase = createClient();
+  await supabase
+    .from("room_players")
+    .update({ role: victim.role })
+    .eq("id", actor.id);
+
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        servanteUsed: true,
+        eventLog: appendGameLog(room.game_state.eventLog, {
+          turn: room.turn_number,
+          phase: "day",
+          text: `${actor.pseudo} semble habitée par un nouveau destin...`,
+        }),
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitPlayerReaction(
+  room: RoomRecord,
+  playerId: string,
+  reaction: PlayerReactionType
+): Promise<void> {
+  const supabase = createClient();
+  const nextReactions = {
+    ...room.game_state.reactions,
+    [playerId]: {
+      playerId,
+      reaction,
+      sentAt: Date.now(),
+    },
+  };
+
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        reactions: nextReactions,
+      },
+    })
+    .eq("id", room.id);
+}
+
 export async function submitHunterShotTarget(
   room: RoomRecord,
   players: RoomPlayerRecord[],
   targetPlayerId: string
 ): Promise<void> {
+  const state = normalizeGameState(room.game_state);
+  const hunterId = state.hunterPendingPlayerId;
+  if (hunterId && targetPlayerId === hunterId) {
+    throw new Error("Le Chasseur ne peut pas se tirer dessus.");
+  }
+  const target = players.find((p) => p.id === targetPlayerId && p.is_alive);
+  if (!target) {
+    throw new Error("Impossible de viser un joueur déjà éliminé.");
+  }
+
   const supabase = createClient();
-  const state = room.game_state;
   const isAuto = room.narrator_mode === "auto";
 
-  const { updatedPlayers, victims, elderShieldTriggered } =
-    resolveDeathsWithCascade(players, state, [
-      { playerId: targetPlayerId, cause: "chasseur" },
-    ]);
+  const {
+    updatedPlayers,
+    victims,
+    elderShieldUsedNext,
+    wildChildTransformedNow,
+  } = resolveDeathsWithCascade(players, state, [
+    { playerId: targetPlayerId, cause: "chasseur" },
+  ]);
 
   await Promise.all(
     victims.map((v) =>
@@ -914,9 +1563,24 @@ export async function submitHunterShotTarget(
         .join(" et ")} !`
     : "Le Chasseur tire dans la nuit.";
 
+  const stateAfterShot: RoomGameState = {
+    ...state,
+    elderShieldUsed: elderShieldUsedNext,
+    wildChildTransformed:
+      state.wildChildTransformed || wildChildTransformedNow,
+    hunterPendingPlayerId: null,
+    hunterReturnPhase: null,
+    lastAnnouncement: shotText,
+    eventLog: appendGameLog(state.eventLog, {
+      turn: room.turn_number,
+      phase: "day",
+      text: shotText,
+    }),
+  };
+
   const victory = evaluateVictory(
     updatedPlayers,
-    state,
+    stateAfterShot,
     room.turn_number,
     victims.map((v) => v.playerId)
   );
@@ -926,12 +1590,8 @@ export async function submitHunterShotTarget(
       .update({
         phase: "VICTORY",
         game_state: {
-          ...state,
+          ...stateAfterShot,
           ...victory,
-          elderShieldUsed: elderShieldTriggered,
-          hunterPendingPlayerId: null,
-          hunterReturnPhase: null,
-          lastAnnouncement: shotText,
           phaseDeadline: null,
         },
       })
@@ -946,11 +1606,7 @@ export async function submitHunterShotTarget(
       .update({
         phase: "DAY_VOTE",
         game_state: {
-          ...state,
-          elderShieldUsed: elderShieldTriggered,
-          hunterPendingPlayerId: null,
-          hunterReturnPhase: null,
-          lastAnnouncement: shotText,
+          ...stateAfterShot,
           phaseDeadline: isAuto ? buildPhaseDeadline("DAY_VOTE") : null,
         },
       })
@@ -959,24 +1615,27 @@ export async function submitHunterShotTarget(
   }
 
   const nextTurn = room.turn_number + 1;
-  const nextNight = resolveNextNightPhase("DAY_VOTE", updatedPlayers, nextTurn);
+  const cleanedNext = resetNightTransientState(stateAfterShot);
+  const nextStepInfo = resolveNextNightStep(
+    "DAY_VOTE",
+    null,
+    updatedPlayers,
+    cleanedNext,
+    nextTurn
+  );
   await clearPlayerVotes(room.id);
+  const nextPhase = nextStepInfo?.phase ?? "DAY_ANNOUNCEMENT";
+  const nextStep = nextStepInfo?.nightStep ?? null;
+
   await supabase
     .from("rooms")
     .update({
-      phase: nextNight,
+      phase: nextPhase,
       turn_number: nextTurn,
       game_state: {
-        ...state,
-        elderShieldUsed: elderShieldTriggered,
-        hunterPendingPlayerId: null,
-        hunterReturnPhase: null,
-        wolfTargetId: null,
-        witchSaveTonight: false,
-        witchKillTargetId: null,
-        seerInspectedId: null,
-        lastAnnouncement: shotText,
-        phaseDeadline: isAuto ? buildPhaseDeadline(nextNight) : null,
+        ...cleanedNext,
+        nightStep: nextStep,
+        phaseDeadline: isAuto ? buildPhaseDeadline(nextPhase, nextStep) : null,
       },
     })
     .eq("id", room.id);
