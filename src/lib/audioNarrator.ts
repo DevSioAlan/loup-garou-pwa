@@ -1,354 +1,240 @@
-import type { GamePhase } from "@/types/game";
+"use client";
 
-let audioCtx: AudioContext | null = null;
-let currentAudioElement: HTMLAudioElement | null = null;
-let speechGeneration = 0;
-let serverTtsDisabled = false;
+import type { GamePhase, TtsVoiceName } from "@/types/game";
 
-const MAX_CACHE_ENTRIES = 60;
-const audioUrlCache = new Map<string, string>();
-const inFlightTts = new Map<string, Promise<string | null>>();
+export type TtsTone = "night" | "day" | "victory";
 
-const PREFERRED_FEMALE_VOICE_TOKENS = [
-  "denise",
-  "vivienne",
-  "eloise",
-  "henriette",
-  "celeste",
-  "céleste",
-  "charline",
-  "brigitte",
-  "sylvie",
-  "google français",
-  "google french",
-  "amélie",
-  "amelie",
-  "audrey",
-  "aurélie",
-  "aurelie",
-  "chloé",
-  "chloe",
-  "virginie",
-  "léa",
-  "lea",
-  "julie",
-  "marie",
-  "siri",
-  "female",
-];
+export interface NarrationOptions {
+  voice?: TtsVoiceName;
+  tone?: TtsTone;
+}
 
-const MALE_VOICE_TOKENS = [
-  "thomas",
-  "paul",
-  "henri",
-  "alain",
-  "nicolas",
-  "daniel",
-  "claude",
-  "rémy",
-  "remy",
-  "mathieu",
-  "martin",
-  "guillaume",
-  "jerome",
-  "jérôme",
-  "antoine",
-  "male",
-];
+const SESSION_CACHE_PREFIX = "lds_tts_v2_";
+const MAX_SESSION_AUDIO_CHARS = 260_000;
+const ttsMemoryCache = new Map<string, string>();
+const pendingTtsFetches = new Map<string, Promise<string | null>>();
+
+let currentAudio: HTMLAudioElement | null = null;
+let sharedAudioContext: AudioContext | null = null;
+let ttsCooldownUntil = 0;
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
-  const Ctx =
-    window.AudioContext ||
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-  if (!Ctx) return null;
-  if (!audioCtx) {
-    audioCtx = new Ctx();
+  if (!sharedAudioContext) {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioCtx) return null;
+    sharedAudioContext = new AudioCtx();
   }
-  if (audioCtx.state === "suspended") {
-    void audioCtx.resume().catch(() => {});
+  if (sharedAudioContext.state === "suspended") {
+    void sharedAudioContext.resume().catch(() => undefined);
   }
-  return audioCtx;
+  return sharedAudioContext;
 }
 
-/**
- * À appeler sur une interaction utilisateur pour débloquer l'audio Web Audio / HTMLAudio sur iOS Safari.
- */
 export function unlockAudioPlayback(): void {
   const ctx = getAudioContext();
   if (ctx && ctx.state === "suspended") {
-    void ctx.resume().catch(() => {});
+    void ctx.resume().catch(() => undefined);
+  }
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    try {
+      window.speechSynthesis.getVoices();
+    } catch {
+      // Ignore sur certains navigateurs mobiles
+    }
   }
 }
 
-/**
- * Effets sonores d'ambiance synthétiques (Web Audio API, 0 dépendance externe).
- */
-export function playPhaseSoundEffect(phase: GamePhase): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
+function buildCacheKey(
+  text: string,
+  voice: TtsVoiceName,
+  tone: TtsTone
+): string {
+  return `${voice}::${tone}::${text.trim()}`;
+}
 
+function makeSessionKey(cacheKey: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < cacheKey.length; i++) {
+    hash ^= cacheKey.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${SESSION_CACHE_PREFIX}${(hash >>> 0).toString(36)}`;
+}
+
+function readCachedDataUrl(cacheKey: string): string | null {
+  const memHit = ttsMemoryCache.get(cacheKey);
+  if (memHit) return memHit;
+
+  if (typeof window === "undefined") return null;
   try {
-    const now = ctx.currentTime;
-
-    const playTone = (
-      freq: number,
-      startOffset: number,
-      duration: number,
-      type: OscillatorType,
-      peakGain: number
-    ) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, now + startOffset);
-      gain.gain.setValueAtTime(0.0001, now + startOffset);
-      gain.gain.exponentialRampToValueAtTime(peakGain, now + startOffset + 0.04);
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        now + startOffset + duration
-      );
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + startOffset);
-      osc.stop(now + startOffset + duration + 0.02);
-    };
-
-    if (
-      phase === "NIGHT_CUPIDON" ||
-      phase === "NIGHT_SEER" ||
-      phase === "NIGHT_WEREWOLVES" ||
-      phase === "NIGHT_WITCH"
-    ) {
-      playTone(146.83, 0, 1.1, "sine", 0.08);
-      playTone(220.0, 0.12, 1.0, "triangle", 0.05);
-      playTone(261.63, 0.25, 0.9, "sine", 0.04);
-    } else if (phase === "DAY_ANNOUNCEMENT" || phase === "DAY_VOTE") {
-      playTone(440, 0, 0.7, "sine", 0.07);
-      playTone(554.37, 0.14, 0.8, "sine", 0.06);
-      playTone(659.25, 0.28, 0.95, "triangle", 0.05);
-    } else if (phase === "HUNTER_SHOT") {
-      playTone(329.63, 0, 0.25, "sawtooth", 0.045);
-      playTone(246.94, 0.18, 0.45, "triangle", 0.06);
-    } else if (phase === "VICTORY") {
-      playTone(392.0, 0, 0.5, "triangle", 0.07);
-      playTone(493.88, 0.15, 0.55, "triangle", 0.07);
-      playTone(587.33, 0.3, 0.7, "sine", 0.075);
-      playTone(783.99, 0.45, 1.1, "sine", 0.08);
-    } else if (phase === "ROLE_REVEAL") {
-      playTone(293.66, 0, 0.8, "sine", 0.06);
-      playTone(440.0, 0.16, 0.8, "sine", 0.045);
+    const stored = window.sessionStorage.getItem(makeSessionKey(cacheKey));
+    if (stored && stored.startsWith("data:audio/")) {
+      ttsMemoryCache.set(cacheKey, stored);
+      return stored;
     }
   } catch {
-    // Repli silencieux si Web Audio est bloqué
+    // sessionStorage indisponible
+  }
+  return null;
+}
+
+function writeCachedDataUrl(cacheKey: string, dataUrl: string): void {
+  ttsMemoryCache.set(cacheKey, dataUrl);
+  if (typeof window === "undefined") return;
+  if (dataUrl.length > MAX_SESSION_AUDIO_CHARS) return;
+
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const k = window.sessionStorage.key(i);
+      if (k && k.startsWith(SESSION_CACHE_PREFIX)) keys.push(k);
+    }
+    if (keys.length >= 12) {
+      window.sessionStorage.removeItem(keys[0]);
+    }
+    window.sessionStorage.setItem(makeSessionKey(cacheKey), dataUrl);
+  } catch {
+    // Quota sessionStorage atteint
   }
 }
 
-function rememberCachedAudioUrl(key: string, objectUrl: string): void {
-  if (audioUrlCache.has(key)) {
-    const existing = audioUrlCache.get(key);
-    audioUrlCache.delete(key);
-    if (existing && existing !== objectUrl) {
-      URL.revokeObjectURL(existing);
-    }
-  } else if (audioUrlCache.size >= MAX_CACHE_ENTRIES) {
-    const oldestKey = audioUrlCache.keys().next().value;
-    if (oldestKey) {
-      const oldestUrl = audioUrlCache.get(oldestKey);
-      audioUrlCache.delete(oldestKey);
-      if (oldestUrl) URL.revokeObjectURL(oldestUrl);
-    }
-  }
-  audioUrlCache.set(key, objectUrl);
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Audio conversion failed"));
+    };
+    reader.onerror = () => reject(new Error("Audio read failed"));
+    reader.readAsDataURL(blob);
+  });
 }
 
-async function fetchNeuralTtsUrl(text: string): Promise<string | null> {
-  const normalizedKey = text.trim();
-  if (!normalizedKey || serverTtsDisabled) return null;
+async function fetchOrLoadCachedAudio(
+  text: string,
+  voice: TtsVoiceName,
+  tone: TtsTone
+): Promise<string | null> {
+  const clean = text.trim();
+  if (!clean) return null;
 
-  const cached = audioUrlCache.get(normalizedKey);
-  if (cached) return cached;
+  const cacheKey = buildCacheKey(clean, voice, tone);
+  const existing = readCachedDataUrl(cacheKey);
+  if (existing) return existing;
 
-  const pending = inFlightTts.get(normalizedKey);
-  if (pending) return pending;
+  if (Date.now() < ttsCooldownUntil) return null;
 
-  const job = (async (): Promise<string | null> => {
+  const inflight = pendingTtsFetches.get(cacheKey);
+  if (inflight) return inflight;
+
+  const task = (async () => {
     try {
-      const res = await fetch("/api/tts", {
+      const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: normalizedKey }),
+        body: JSON.stringify({ text: clean, voice, tone }),
       });
 
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!res.ok || contentType.includes("application/json")) {
-        // Aucun fournisseur cloud actif ou quota épuisé : bascule proprement sans spammer le réseau
-        serverTtsDisabled = true;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !contentType.startsWith("audio/")) {
+        if (response.status >= 429) {
+          ttsCooldownUntil = Date.now() + 45_000;
+        }
         return null;
       }
 
-      const blob = await res.blob();
-      if (!blob.size) return null;
+      const blob = await response.blob();
+      if (blob.size < 128) return null;
 
-      const url = URL.createObjectURL(blob);
-      rememberCachedAudioUrl(normalizedKey, url);
-      return url;
+      const dataUrl = await blobToDataUrl(blob);
+      writeCachedDataUrl(cacheKey, dataUrl);
+      return dataUrl;
     } catch {
       return null;
     } finally {
-      inFlightTts.delete(normalizedKey);
+      pendingTtsFetches.delete(cacheKey);
     }
   })();
 
-  inFlightTts.set(normalizedKey, job);
-  return job;
+  pendingTtsFetches.set(cacheKey, task);
+  return task;
 }
 
-function pickBestFrenchFemaleVoice(
-  voices: SpeechSynthesisVoice[]
-): SpeechSynthesisVoice | null {
-  const frenchVoices = voices.filter((v) =>
-    v.lang.toLowerCase().startsWith("fr")
-  );
-  if (frenchVoices.length === 0) return null;
-
-  let best: SpeechSynthesisVoice | null = null;
-  let bestScore = -Infinity;
-
-  for (const voice of frenchVoices) {
-    const lower = `${voice.name} ${voice.voiceURI}`.toLowerCase();
-    let score = 0;
-
-    if (voice.lang.toLowerCase() === "fr-fr") score += 12;
-    if (lower.includes("natural") || lower.includes("neural") || lower.includes("online")) {
-      score += 30;
-    }
-    if (lower.includes("enhanced") || lower.includes("premium") || lower.includes("studio")) {
-      score += 18;
-    }
-
-    const femaleIndex = PREFERRED_FEMALE_VOICE_TOKENS.findIndex((token) =>
-      lower.includes(token)
-    );
-    if (femaleIndex >= 0) {
-      score += 120 - femaleIndex * 3;
-    }
-
-    if (MALE_VOICE_TOKENS.some((token) => lower.includes(token))) {
-      score -= 100;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = voice;
-    }
+function selectBestFrenchFemaleVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return null;
   }
 
-  return best;
+  const voices = window.speechSynthesis.getVoices();
+  const frVoices = voices.filter((v) =>
+    v.lang.toLowerCase().startsWith("fr")
+  );
+  if (frVoices.length === 0) return null;
+
+  const preferredKeywords = [
+    "google français",
+    "denise",
+    "vivienne",
+    "eloise",
+    "hortense",
+    "julie",
+    "amelie",
+    "audrey",
+    "aurelie",
+    "virginie",
+    "sylvie",
+    "celine",
+    "lea",
+    "natural",
+    "online",
+  ];
+
+  for (const kw of preferredKeywords) {
+    const match = frVoices.find((v) => v.name.toLowerCase().includes(kw));
+    if (match) return match;
+  }
+
+  const nonMale = frVoices.find(
+    (v) =>
+      !/thomas|paul|henri|nicolas|alain|daniel|guillaume|remy|claude|mathieu/i.test(
+        v.name
+      )
+  );
+  return nonMale ?? frVoices[0];
 }
 
-function speakWithWebSpeechFallback(text: string, genId: number): void {
+function speakWithBrowserFallback(text: string): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
   }
 
-  const runSpeak = () => {
-    if (genId !== speechGeneration) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "fr-FR";
-      utterance.rate = 0.94;
-      utterance.pitch = 1.05;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "fr-FR";
+    utterance.rate = 0.94;
+    utterance.pitch = 1.04;
+    utterance.volume = 0.95;
 
-      const voices = window.speechSynthesis.getVoices();
-      const bestVoice = pickBestFrenchFemaleVoice(voices);
-      if (bestVoice) {
-        utterance.voice = bestVoice;
-      }
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      // Repli silencieux
-    }
-  };
+    const voice = selectBestFrenchFemaleVoice();
+    if (voice) utterance.voice = voice;
 
-  const initialVoices = window.speechSynthesis.getVoices();
-  if (initialVoices.length > 0) {
-    runSpeak();
-    return;
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    // Web Speech API bloquée ou indisponible
   }
-
-  let handled = false;
-  const handleVoicesChanged = () => {
-    if (handled) return;
-    handled = true;
-    window.speechSynthesis.removeEventListener?.(
-      "voiceschanged",
-      handleVoicesChanged
-    );
-    runSpeak();
-  };
-
-  window.speechSynthesis.addEventListener?.(
-    "voiceschanged",
-    handleVoicesChanged
-  );
-  window.setTimeout(() => {
-    if (!handled) {
-      handled = true;
-      window.speechSynthesis.removeEventListener?.(
-        "voiceschanged",
-        handleVoicesChanged
-      );
-      runSpeak();
-    }
-  }, 260);
-}
-
-/**
- * Synthèse vocale féminine naturelle :
- * 1. Utilise /api/tts (Gemini / Google Neural TTS) avec cache client instantané si configuré.
- * 2. Retombe automatiquement sur la meilleure voix féminine française Web Speech API.
- */
-export function speakFrenchNarration(text: string): void {
-  if (typeof window === "undefined" || !text.trim()) return;
-
-  stopFrenchNarration();
-  const currentGen = speechGeneration;
-
-  void (async () => {
-    const audioUrl = await fetchNeuralTtsUrl(text);
-    if (currentGen !== speechGeneration) return;
-
-    if (audioUrl) {
-      try {
-        const audio = new Audio(audioUrl);
-        currentAudioElement = audio;
-        await audio.play();
-        return;
-      } catch {
-        currentAudioElement = null;
-      }
-    }
-
-    speakWithWebSpeechFallback(text, currentGen);
-  })();
 }
 
 export function stopFrenchNarration(): void {
-  speechGeneration += 1;
-
-  if (currentAudioElement) {
-    try {
-      currentAudioElement.pause();
-      currentAudioElement.currentTime = 0;
-    } catch {
-      // Ignore
-    }
-    currentAudioElement = null;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
   }
-
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     try {
       window.speechSynthesis.cancel();
@@ -356,4 +242,123 @@ export function stopFrenchNarration(): void {
       // Ignore
     }
   }
+}
+
+export function preloadFrenchNarration(
+  text: string,
+  options?: NarrationOptions
+): void {
+  if (typeof window === "undefined") return;
+  const clean = text.trim();
+  if (!clean) return;
+
+  const voice = options?.voice ?? "Aoede";
+  const tone = options?.tone ?? "night";
+  void fetchOrLoadCachedAudio(clean, voice, tone);
+}
+
+export async function speakFrenchNarration(
+  text: string,
+  options?: NarrationOptions
+): Promise<void> {
+  if (typeof window === "undefined") return;
+  const clean = text.trim();
+  if (!clean) return;
+
+  stopFrenchNarration();
+
+  const voice = options?.voice ?? "Aoede";
+  const tone = options?.tone ?? "night";
+  const dataUrl = await fetchOrLoadCachedAudio(clean, voice, tone);
+
+  if (dataUrl) {
+    try {
+      const audio = new Audio(dataUrl);
+      audio.volume = 0.95;
+      currentAudio = audio;
+      await audio.play();
+      return;
+    } catch {
+      // Repli automatique vers synthèse vocale si autoplay bloqué sur audio element
+    }
+  }
+
+  speakWithBrowserFallback(clean);
+}
+
+export function playPhaseSoundEffect(phase: GamePhase): void {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const playTone = (
+    freq: number,
+    startOffset: number,
+    duration: number,
+    gainPeak: number,
+    type: OscillatorType = "sine"
+  ) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now + startOffset);
+    gain.gain.setValueAtTime(0.0001, now + startOffset);
+    gain.gain.exponentialRampToValueAtTime(gainPeak, now + startOffset + 0.04);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + startOffset + duration
+    );
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now + startOffset);
+    osc.stop(now + startOffset + duration + 0.03);
+  };
+
+  if (phase.startsWith("NIGHT_")) {
+    playTone(220, 0, 0.7, 0.055, "sine");
+    playTone(261.63, 0.14, 0.75, 0.045, "sine");
+    playTone(329.63, 0.28, 0.85, 0.04, "triangle");
+    return;
+  }
+
+  if (phase === "DAY_ANNOUNCEMENT" || phase === "DAY_VOTE") {
+    playTone(392, 0, 0.55, 0.05, "triangle");
+    playTone(493.88, 0.12, 0.65, 0.055, "sine");
+    playTone(587.33, 0.24, 0.85, 0.045, "sine");
+    return;
+  }
+
+  if (phase === "HUNTER_SHOT") {
+    playTone(146.83, 0, 0.5, 0.08, "triangle");
+    playTone(293.66, 0.08, 0.45, 0.05, "sine");
+    return;
+  }
+
+  if (phase === "VICTORY") {
+    playTone(392, 0, 0.5, 0.055, "triangle");
+    playTone(493.88, 0.12, 0.55, 0.055, "sine");
+    playTone(587.33, 0.24, 0.65, 0.06, "sine");
+    playTone(783.99, 0.36, 1.0, 0.065, "triangle");
+  }
+}
+
+export function playCountdownTickSound(secondsLeft: number): void {
+  const ctx = getAudioContext();
+  if (!ctx || secondsLeft < 1 || secondsLeft > 5) return;
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(secondsLeft === 1 ? 1046.5 : 880, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(
+    secondsLeft === 1 ? 0.045 : 0.025,
+    now + 0.01
+  );
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.1);
 }

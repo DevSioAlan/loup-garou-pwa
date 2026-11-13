@@ -28,6 +28,7 @@ import type {
   RoomGameState,
   RoomPlayerRecord,
   RoomRecord,
+  TtsVoiceName,
 } from "@/types/game";
 
 export {
@@ -343,6 +344,37 @@ export async function updateRoomComposition(
     .eq("id", roomId);
 }
 
+export async function updateRoomLobbySettings(
+  room: RoomRecord,
+  patch: {
+    dayDebateSeconds?: number | null;
+    mayorEnabled?: boolean;
+    primaryAudioUserId?: string | null;
+    ttsVoice?: TtsVoiceName;
+  }
+): Promise<void> {
+  const supabase = createClient();
+  const current = normalizeGameState(room.game_state);
+  const nextState: RoomGameState = {
+    ...current,
+    ...(patch.dayDebateSeconds !== undefined
+      ? { dayDebateSeconds: patch.dayDebateSeconds }
+      : {}),
+    ...(patch.mayorEnabled !== undefined
+      ? { mayorEnabled: patch.mayorEnabled }
+      : {}),
+    ...(patch.primaryAudioUserId !== undefined
+      ? { primaryAudioUserId: patch.primaryAudioUserId }
+      : {}),
+    ...(patch.ttsVoice !== undefined ? { ttsVoice: patch.ttsVoice } : {}),
+  };
+
+  await supabase
+    .from("rooms")
+    .update({ game_state: nextState })
+    .eq("id", room.id);
+}
+
 /**
  * Lance la partie : distribue les rôles aléatoirement et passe à ROLE_REVEAL.
  */
@@ -352,6 +384,7 @@ export async function startGameInRoom(
 ): Promise<void> {
   const supabase = createClient();
   const assignments = dealRolesToPlayers(players, room.role_composition);
+  const existingSettings = normalizeGameState(room.game_state);
 
   await Promise.all(
     assignments.map((item) =>
@@ -369,6 +402,10 @@ export async function startGameInRoom(
 
   const nextState: RoomGameState = {
     ...createInitialGameState(),
+    dayDebateSeconds: existingSettings.dayDebateSeconds,
+    mayorEnabled: existingSettings.mayorEnabled,
+    primaryAudioUserId: existingSettings.primaryAudioUserId,
+    ttsVoice: existingSettings.ttsVoice,
     eventLog: appendGameLog([], {
       turn: 1,
       phase: "system",
@@ -390,6 +427,60 @@ export async function startGameInRoom(
     .eq("id", room.id);
 }
 
+function resolveMayorOnDeaths(
+  state: RoomGameState,
+  updatedPlayers: RoomPlayerRecord[],
+  victims: NightVictimEntry[]
+): Pick<RoomGameState, "mayorPlayerId" | "mayorPendingSuccessorFromId"> {
+  if (!state.mayorPlayerId) {
+    return {
+      mayorPlayerId: null,
+      mayorPendingSuccessorFromId: state.mayorPendingSuccessorFromId,
+    };
+  }
+  const mayorDied = victims.some((v) => v.playerId === state.mayorPlayerId);
+  if (!mayorDied) {
+    return {
+      mayorPlayerId: state.mayorPlayerId,
+      mayorPendingSuccessorFromId: state.mayorPendingSuccessorFromId,
+    };
+  }
+
+  const aliveLeft = updatedPlayers.filter((p) => p.is_alive);
+  if (aliveLeft.length < 2) {
+    return {
+      mayorPlayerId: null,
+      mayorPendingSuccessorFromId: null,
+    };
+  }
+
+  return {
+    mayorPlayerId: null,
+    mayorPendingSuccessorFromId: state.mayorPlayerId,
+  };
+}
+
+function autoAssignFallbackMayorIfPending(
+  state: RoomGameState,
+  players: RoomPlayerRecord[]
+): RoomGameState {
+  if (!state.mayorPendingSuccessorFromId) return state;
+  const fallback = players.find((p) => p.is_alive) ?? null;
+  if (!fallback) {
+    return { ...state, mayorPendingSuccessorFromId: null };
+  }
+  return {
+    ...state,
+    mayorPlayerId: fallback.id,
+    mayorPendingSuccessorFromId: null,
+    eventLog: appendGameLog(state.eventLog, {
+      turn: 1,
+      phase: "day",
+      text: `${fallback.pseudo} reçoit l'écharpe de Maire par intérim.`,
+    }),
+  };
+}
+
 function resetNightTransientState(state: RoomGameState): RoomGameState {
   return {
     ...state,
@@ -409,6 +500,7 @@ function resetNightTransientState(state: RoomGameState): RoomGameState {
     loupBlancTargetId: null,
     bearGrowledTonight: false,
     elderShieldTriggeredTonight: false,
+    voteMode: "ELIMINATION",
     nightStep: null,
   };
 }
@@ -582,14 +674,29 @@ export async function advanceRoomPhase(
       return;
     }
 
+    const aliveCount = players.filter((p) => p.is_alive).length;
+    const shouldElectMayor =
+      room.turn_number === 1 &&
+      state.mayorEnabled &&
+      !state.mayorPlayerId &&
+      !state.mayorElectionDone &&
+      aliveCount >= 3;
+    const resolvedState = autoAssignFallbackMayorIfPending(state, players);
+    const nextVoteState: RoomGameState = {
+      ...resolvedState,
+      voteMode: shouldElectMayor ? "MAYOR_ELECTION" : "ELIMINATION",
+    };
+
     await clearPlayerVotes(room.id);
     await supabase
       .from("rooms")
       .update({
         phase: "DAY_VOTE",
         game_state: {
-          ...state,
-          phaseDeadline: isAuto ? buildPhaseDeadline("DAY_VOTE") : null,
+          ...nextVoteState,
+          phaseDeadline: isAuto
+            ? buildPhaseDeadline("DAY_VOTE", null, nextVoteState)
+            : null,
         },
       })
       .eq("id", room.id);
@@ -597,19 +704,74 @@ export async function advanceRoomPhase(
   }
 
   if (room.phase === "DAY_VOTE") {
+    if (state.voteMode === "MAYOR_ELECTION") {
+      const aliveVoters = players.filter((p) => p.is_alive);
+      const { targetId, isTie, counts } = tallyTargetFromVoters(
+        aliveVoters,
+        null,
+        0,
+        null
+      );
+
+      let electedId = targetId;
+      if (!electedId && isTie) {
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        electedId = sorted[0]?.[0] ?? null;
+      }
+
+      const electedPlayer = electedId
+        ? players.find((p) => p.id === electedId && p.is_alive) ?? null
+        : null;
+      const announcement = electedPlayer
+        ? `${electedPlayer.pseudo} est élu Maire du village (voix double) ! Place au conseil d'élimination.`
+        : "Aucun Maire n'a été désigné. Le conseil du village peut débattre et voter.";
+
+      const nextVoteState: RoomGameState = {
+        ...state,
+        mayorPlayerId: electedPlayer?.id ?? null,
+        mayorElectionDone: true,
+        voteMode: "ELIMINATION",
+        lastAnnouncement: announcement,
+        eventLog: appendGameLog(state.eventLog, {
+          turn: room.turn_number,
+          phase: "day",
+          text: `Jour ${room.turn_number} : ${announcement}`,
+        }),
+      };
+
+      await clearPlayerVotes(room.id);
+      await supabase
+        .from("rooms")
+        .update({
+          phase: "DAY_VOTE",
+          game_state: {
+            ...nextVoteState,
+            phaseDeadline: isAuto
+              ? buildPhaseDeadline("DAY_VOTE", null, nextVoteState)
+              : null,
+          },
+        })
+        .eq("id", room.id);
+      return;
+    }
+
+    const activeState = autoAssignFallbackMayorIfPending(state, players);
     const aliveVoters = players.filter(
-      (p) => p.is_alive && !state.idiotSparedPlayerIds.includes(p.id)
+      (p) => p.is_alive && !activeState.idiotSparedPlayerIds.includes(p.id)
     );
     const activeCorbeauTarget =
-      state.corbeauTargetId &&
-      players.some((p) => p.id === state.corbeauTargetId && p.is_alive)
-        ? state.corbeauTargetId
+      activeState.corbeauTargetId &&
+      players.some(
+        (p) => p.id === activeState.corbeauTargetId && p.is_alive
+      )
+        ? activeState.corbeauTargetId
         : null;
 
     const { targetId, isTie } = tallyTargetFromVoters(
       aliveVoters,
       activeCorbeauTarget,
-      2
+      2,
+      activeState.mayorPlayerId
     );
 
     if (!targetId) {
@@ -618,10 +780,10 @@ export async function advanceRoomPhase(
         ? "Égalité lors du vote : personne n'a été exécuté aujourd'hui."
         : "Aucun vote exprimé : le village garde le silence.";
       const baseNextState: RoomGameState = {
-        ...resetNightTransientState(state),
+        ...resetNightTransientState(activeState),
         nightVictims: [],
         lastAnnouncement: announcement,
-        eventLog: appendGameLog(state.eventLog, {
+        eventLog: appendGameLog(activeState.eventLog, {
           turn: room.turn_number,
           phase: "day",
           text: `Jour ${room.turn_number} : ${announcement}`,
@@ -666,16 +828,19 @@ export async function advanceRoomPhase(
     const votedTarget = players.find((p) => p.id === targetId && p.is_alive);
     if (
       votedTarget?.role === "idiot-du-village" &&
-      !state.idiotSparedPlayerIds.includes(votedTarget.id)
+      !activeState.idiotSparedPlayerIds.includes(votedTarget.id)
     ) {
       const nextTurn = room.turn_number + 1;
       const announcement = `${votedTarget.pseudo} est l'Idiot du Village ! Le hameau l'épargne (droit de vote retiré).`;
       const baseNextState: RoomGameState = {
-        ...resetNightTransientState(state),
-        idiotSparedPlayerIds: [...state.idiotSparedPlayerIds, votedTarget.id],
+        ...resetNightTransientState(activeState),
+        idiotSparedPlayerIds: [
+          ...activeState.idiotSparedPlayerIds,
+          votedTarget.id,
+        ],
         nightVictims: [],
         lastAnnouncement: announcement,
-        eventLog: appendGameLog(state.eventLog, {
+        eventLog: appendGameLog(activeState.eventLog, {
           turn: room.turn_number,
           phase: "day",
           text: `Jour ${room.turn_number} : ${votedTarget.pseudo} a été épargné par le conseil.`,
@@ -716,7 +881,7 @@ export async function advanceRoomPhase(
       hunterPendingPlayerId,
       elderShieldUsedNext,
       wildChildTransformedNow,
-    } = resolveDeathsWithCascade(players, state, [
+    } = resolveDeathsWithCascade(players, activeState, [
       { playerId: targetId, cause: "village" },
     ]);
 
@@ -733,15 +898,21 @@ export async function advanceRoomPhase(
     const announcement = `${names} ${
       victims.length > 1 ? "ont été éliminés" : "a été éliminé"
     } par le village.`;
+    const mayorAfterDeaths = resolveMayorOnDeaths(
+      activeState,
+      updatedPlayers,
+      victims
+    );
 
     const stateAfterVote: RoomGameState = {
-      ...state,
+      ...activeState,
+      ...mayorAfterDeaths,
       elderShieldUsed: elderShieldUsedNext,
       wildChildTransformed:
-        state.wildChildTransformed || wildChildTransformedNow,
+        activeState.wildChildTransformed || wildChildTransformedNow,
       nightVictims: victims,
       lastAnnouncement: announcement,
-      eventLog: appendGameLog(state.eventLog, {
+      eventLog: appendGameLog(activeState.eventLog, {
         turn: room.turn_number,
         phase: "day",
         text: `Jour ${room.turn_number} : ${announcement}`,
@@ -780,6 +951,7 @@ export async function advanceRoomPhase(
           game_state: {
             ...stateAfterVote,
             ...victory,
+            mayorPendingSuccessorFromId: null,
             eventLog: appendGameLog(stateAfterVote.eventLog, {
               turn: room.turn_number,
               phase: "system",
@@ -839,16 +1011,29 @@ export async function advanceRoomPhase(
     }
 
     if (state.hunterReturnPhase === "DAY_VOTE") {
+      const aliveCount = players.filter((p) => p.is_alive).length;
+      const shouldElectMayor =
+        room.turn_number === 1 &&
+        state.mayorEnabled &&
+        !state.mayorPlayerId &&
+        !state.mayorElectionDone &&
+        aliveCount >= 3;
+      const nextVoteState: RoomGameState = {
+        ...state,
+        hunterPendingPlayerId: null,
+        hunterReturnPhase: null,
+        voteMode: shouldElectMayor ? "MAYOR_ELECTION" : "ELIMINATION",
+      };
       await clearPlayerVotes(room.id);
       await supabase
         .from("rooms")
         .update({
           phase: "DAY_VOTE",
           game_state: {
-            ...state,
-            hunterPendingPlayerId: null,
-            hunterReturnPhase: null,
-            phaseDeadline: isAuto ? buildPhaseDeadline("DAY_VOTE") : null,
+            ...nextVoteState,
+            phaseDeadline: isAuto
+              ? buildPhaseDeadline("DAY_VOTE", null, nextVoteState)
+              : null,
           },
         })
         .eq("id", room.id);
@@ -1071,8 +1256,15 @@ async function resolveNightAndEnterDay(
     });
   }
 
+  const mayorAfterDeaths = resolveMayorOnDeaths(
+    postNightBaseState,
+    updatedPlayers,
+    victims
+  );
+
   const finalState: RoomGameState = {
     ...postNightBaseState,
+    ...mayorAfterDeaths,
     bearGrowledTonight,
     nightVictims: victims,
     lastAnnouncement: announcement,
@@ -1563,8 +1755,11 @@ export async function submitHunterShotTarget(
         .join(" et ")} !`
     : "Le Chasseur tire dans la nuit.";
 
+  const mayorAfterDeaths = resolveMayorOnDeaths(state, updatedPlayers, victims);
+
   const stateAfterShot: RoomGameState = {
     ...state,
+    ...mayorAfterDeaths,
     elderShieldUsed: elderShieldUsedNext,
     wildChildTransformed:
       state.wildChildTransformed || wildChildTransformedNow,
@@ -1592,6 +1787,7 @@ export async function submitHunterShotTarget(
         game_state: {
           ...stateAfterShot,
           ...victory,
+          mayorPendingSuccessorFromId: null,
           phaseDeadline: null,
         },
       })
@@ -1600,14 +1796,27 @@ export async function submitHunterShotTarget(
   }
 
   if (state.hunterReturnPhase === "DAY_VOTE") {
+    const aliveCount = updatedPlayers.filter((p) => p.is_alive).length;
+    const shouldElectMayor =
+      room.turn_number === 1 &&
+      stateAfterShot.mayorEnabled &&
+      !stateAfterShot.mayorPlayerId &&
+      !stateAfterShot.mayorElectionDone &&
+      aliveCount >= 3;
+    const nextVoteState: RoomGameState = {
+      ...stateAfterShot,
+      voteMode: shouldElectMayor ? "MAYOR_ELECTION" : "ELIMINATION",
+    };
     await clearPlayerVotes(room.id);
     await supabase
       .from("rooms")
       .update({
         phase: "DAY_VOTE",
         game_state: {
-          ...stateAfterShot,
-          phaseDeadline: isAuto ? buildPhaseDeadline("DAY_VOTE") : null,
+          ...nextVoteState,
+          phaseDeadline: isAuto
+            ? buildPhaseDeadline("DAY_VOTE", null, nextVoteState)
+            : null,
         },
       })
       .eq("id", room.id);
@@ -1641,6 +1850,47 @@ export async function submitHunterShotTarget(
     .eq("id", room.id);
 }
 
+export async function submitMayorSuccessor(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorPlayerId: string,
+  successorPlayerId: string
+): Promise<void> {
+  const state = normalizeGameState(room.game_state);
+  if (
+    !state.mayorPendingSuccessorFromId ||
+    (state.mayorPendingSuccessorFromId !== actorPlayerId &&
+      !players.find((p) => p.id === actorPlayerId)?.is_owner)
+  ) {
+    throw new Error("La succession du Maire n'est pas disponible.");
+  }
+
+  const successor = players.find(
+    (p) => p.id === successorPlayerId && p.is_alive
+  );
+  if (!successor) {
+    throw new Error("Le successeur choisi doit être un joueur vivant.");
+  }
+
+  const supabase = createClient();
+  const nextState: RoomGameState = {
+    ...state,
+    mayorPlayerId: successor.id,
+    mayorPendingSuccessorFromId: null,
+    lastAnnouncement: `${successor.pseudo} reçoit l'écharpe de Maire du village !`,
+    eventLog: appendGameLog(state.eventLog, {
+      turn: room.turn_number,
+      phase: "day",
+      text: `${successor.pseudo} hérite de l'écharpe de Maire.`,
+    }),
+  };
+
+  await supabase
+    .from("rooms")
+    .update({ game_state: nextState })
+    .eq("id", room.id);
+}
+
 export async function ownerTogglePlayerAlive(
   playerId: string,
   nextAlive: boolean
@@ -1652,8 +1902,34 @@ export async function ownerTogglePlayerAlive(
     .eq("id", playerId);
 }
 
-export async function resetRoomToLobby(roomId: string): Promise<void> {
+export async function resetRoomToLobby(
+  roomId: string,
+  existingRoom?: RoomRecord | null
+): Promise<void> {
   const supabase = createClient();
+
+  let sourceState: RoomGameState | null = existingRoom
+    ? normalizeGameState(existingRoom.game_state)
+    : null;
+  if (!sourceState) {
+    const { data } = await supabase
+      .from("rooms")
+      .select("game_state")
+      .eq("id", roomId)
+      .maybeSingle();
+    if (data?.game_state) {
+      sourceState = normalizeGameState(data.game_state as RoomGameState);
+    }
+  }
+
+  const freshState: RoomGameState = {
+    ...createInitialGameState(),
+    dayDebateSeconds: sourceState?.dayDebateSeconds ?? 120,
+    mayorEnabled: sourceState?.mayorEnabled ?? true,
+    primaryAudioUserId: sourceState?.primaryAudioUserId ?? null,
+    ttsVoice: sourceState?.ttsVoice ?? "Aoede",
+  };
+
   await supabase
     .from("room_players")
     .update({
@@ -1669,7 +1945,7 @@ export async function resetRoomToLobby(roomId: string): Promise<void> {
     .update({
       phase: "LOBBY",
       turn_number: 1,
-      game_state: createInitialGameState(),
+      game_state: freshState,
     })
     .eq("id", roomId);
 }

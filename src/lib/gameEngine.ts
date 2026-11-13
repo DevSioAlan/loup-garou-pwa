@@ -116,6 +116,14 @@ export function createInitialGameState(): RoomGameState {
     loupBlancTargetId: null,
     bearGrowledTonight: false,
     elderShieldTriggeredTonight: false,
+    dayDebateSeconds: 120,
+    mayorEnabled: true,
+    mayorPlayerId: null,
+    mayorPendingSuccessorFromId: null,
+    mayorElectionDone: false,
+    voteMode: "ELIMINATION",
+    primaryAudioUserId: null,
+    ttsVoice: "Aoede",
     eventLog: [],
     reactions: {},
   };
@@ -145,6 +153,16 @@ export function normalizeGameState(
     idiotSparedPlayerIds: Array.isArray(raw.idiotSparedPlayerIds)
       ? raw.idiotSparedPlayerIds
       : [],
+    dayDebateSeconds:
+      raw.dayDebateSeconds === undefined ? 120 : raw.dayDebateSeconds,
+    mayorEnabled: raw.mayorEnabled ?? true,
+    mayorPlayerId: raw.mayorPlayerId ?? null,
+    mayorPendingSuccessorFromId: raw.mayorPendingSuccessorFromId ?? null,
+    mayorElectionDone: Boolean(raw.mayorElectionDone),
+    voteMode:
+      raw.voteMode === "MAYOR_ELECTION" ? "MAYOR_ELECTION" : "ELIMINATION",
+    primaryAudioUserId: raw.primaryAudioUserId ?? null,
+    ttsVoice: raw.ttsVoice === "Kore" ? "Kore" : "Aoede",
     eventLog: Array.isArray(raw.eventLog) ? raw.eventLog : [],
     reactions:
       raw.reactions && typeof raw.reactions === "object" ? raw.reactions : {},
@@ -247,11 +265,16 @@ export function dealRolesToPlayers(
 
 export function getPhaseDurationSeconds(
   phase: GamePhase,
-  nightStep?: NightStepId | null
+  nightStep?: NightStepId | null,
+  gameState?: Partial<RoomGameState> | null
 ): number | null {
   if (phase === "ROLE_REVEAL") return 22;
   if (phase === "DAY_ANNOUNCEMENT") return 18;
-  if (phase === "DAY_VOTE") return 90;
+  if (phase === "DAY_VOTE") {
+    if (gameState?.voteMode === "MAYOR_ELECTION") return 35;
+    if (gameState && gameState.dayDebateSeconds === null) return null;
+    return gameState?.dayDebateSeconds ?? 120;
+  }
   if (phase === "HUNTER_SHOT") return 25;
 
   if (phase.startsWith("NIGHT_")) {
@@ -285,9 +308,10 @@ export function getPhaseDurationSeconds(
 
 export function buildPhaseDeadline(
   phase: GamePhase,
-  nightStep?: NightStepId | null
+  nightStep?: NightStepId | null,
+  gameState?: Partial<RoomGameState> | null
 ): string | null {
-  const sec = getPhaseDurationSeconds(phase, nightStep);
+  const sec = getPhaseDurationSeconds(phase, nightStep, gameState);
   if (!sec) return null;
   return new Date(Date.now() + sec * 1000).toISOString();
 }
@@ -624,12 +648,13 @@ export function evaluateVictory(
 }
 
 /**
- * Calcule la majorité des votes (avec bonus optionnel du Corbeau sur un joueur).
+ * Calcule la majorité des votes (avec bonus éventuel du Corbeau et double vote du Maire).
  */
 export function tallyTargetFromVoters(
   voters: RoomPlayerRecord[],
   bonusTargetId?: string | null,
-  bonusCount = 2
+  bonusCount = 2,
+  doubleVotePlayerId?: string | null
 ): {
   targetId: string | null;
   maxVotes: number;
@@ -640,7 +665,9 @@ export function tallyTargetFromVoters(
 
   for (const voter of voters) {
     if (!voter.target_id) continue;
-    counts[voter.target_id] = (counts[voter.target_id] ?? 0) + 1;
+    const weight =
+      doubleVotePlayerId && voter.id === doubleVotePlayerId ? 2 : 1;
+    counts[voter.target_id] = (counts[voter.target_id] ?? 0) + weight;
   }
 
   if (bonusTargetId && bonusCount > 0) {
@@ -778,7 +805,8 @@ export function resolveDeathsWithCascade(
 
 export function getPhaseLabel(
   phase: GamePhase,
-  nightStep?: NightStepId | null
+  nightStep?: NightStepId | null,
+  gameState?: Partial<RoomGameState> | null
 ): string {
   if (phase.startsWith("NIGHT_") && nightStep) {
     const stepLabels: Record<Exclude<NightStepId, null>, string> = {
@@ -814,7 +842,9 @@ export function getPhaseLabel(
     case "DAY_ANNOUNCEMENT":
       return "Aube sur le Village";
     case "DAY_VOTE":
-      return "Conseil & Vote du Jour";
+      return gameState?.voteMode === "MAYOR_ELECTION"
+        ? "Élection du Maire"
+        : "Conseil & Vote du Jour";
     case "HUNTER_SHOT":
       return "Tir du Chasseur";
     case "VICTORY":
@@ -885,6 +915,9 @@ export function getHumanNarratorScript(
       return `Le village se réveille. Annoncez tristement l'élimination de : ${names.join(", ")}.${extras.length ? " " + extras.join(" ") : ""}`;
     }
     case "DAY_VOTE":
+      if (gameState.voteMode === "MAYOR_ELECTION") {
+        return "Organisez l'élection du Maire ! Laissez les volontaires se présenter brièvement, puis chacun vote pour le premier Maire du village (sa voix comptera double).";
+      }
       return corbeauTarget
         ? `Lancez les débats ! Rappelez que ${corbeauTarget.pseudo} subit la malédiction du Corbeau (+2 voix) et demandez à chacun de voter.`
         : "Lancez les débats ! Laissez les survivants argumenter, puis invitez chaque joueur vivant à voter sur son téléphone.";
@@ -1002,6 +1035,9 @@ export function getAutoNarratorSpeech(
       return parts.join(" ");
     }
     case "DAY_VOTE":
+      if (gameState.voteMode === "MAYOR_ELECTION") {
+        return "Avant les premiers soupçons, le village doit élire son Maire. Sa voix comptera double lors de chaque conseil.";
+      }
       return corbeauTarget
         ? `Le conseil du village est ouvert. Rappelons que ${corbeauTarget.pseudo} porte la malédiction du Corbeau. Débattez avec prudence et votez.`
         : "Le conseil du village est ouvert. Débattez avec prudence et désignez un suspect.";
@@ -1012,4 +1048,111 @@ export function getAutoNarratorSpeech(
     default:
       return "";
   }
+}
+
+export function didPlayerWinVictory(
+  player: RoomPlayerRecord | null,
+  gameState: RoomGameState
+): boolean | null {
+  if (!player || !gameState.winnerCamp) return null;
+
+  if (gameState.winnerCamp === "amoureux") {
+    return Boolean(gameState.lovers?.includes(player.id));
+  }
+
+  if (gameState.winnerCamp === "solitaire") {
+    const title = gameState.winnerTitle ?? "";
+    if (title.includes("Ange")) return player.role === "ange";
+    if (title.includes("Flûte")) return player.role === "joueur-de-flute";
+    if (title.includes("Loup-Garou Blanc")) {
+      return player.role === "loup-garou-blanc";
+    }
+    return false;
+  }
+
+  if (gameState.winnerCamp === "loup") {
+    return isEffectiveWolf(player, gameState);
+  }
+
+  if (gameState.winnerCamp === "village") {
+    return (
+      !isEffectiveWolf(player, gameState) &&
+      player.role !== "loup-garou-blanc" &&
+      player.role !== "joueur-de-flute" &&
+      player.role !== "ange"
+    );
+  }
+
+  return null;
+}
+
+export function predictNextNarrationText(
+  phase: GamePhase,
+  gameState: RoomGameState,
+  turnNumber: number,
+  players: RoomPlayerRecord[]
+): string | null {
+  if (phase === "ROLE_REVEAL") {
+    const first = resolveNextNightStep(
+      "ROLE_REVEAL",
+      null,
+      players,
+      gameState,
+      1
+    );
+    if (!first) return null;
+    return getAutoNarratorSpeech(
+      first.phase,
+      { ...gameState, nightStep: first.nightStep },
+      1,
+      players
+    );
+  }
+
+  if (phase.startsWith("NIGHT_")) {
+    const next = resolveNextNightStep(
+      phase,
+      gameState.nightStep,
+      players,
+      gameState,
+      turnNumber
+    );
+    if (!next) return null;
+    return getAutoNarratorSpeech(
+      next.phase,
+      { ...gameState, nightStep: next.nightStep },
+      turnNumber,
+      players
+    );
+  }
+
+  if (phase === "DAY_ANNOUNCEMENT") {
+    const alive = players.filter((p) => p.is_alive);
+    const willElectMayor =
+      turnNumber === 1 &&
+      gameState.mayorEnabled &&
+      !gameState.mayorPlayerId &&
+      !gameState.mayorElectionDone &&
+      alive.length >= 3;
+    return getAutoNarratorSpeech(
+      "DAY_VOTE",
+      {
+        ...gameState,
+        voteMode: willElectMayor ? "MAYOR_ELECTION" : "ELIMINATION",
+      },
+      turnNumber,
+      players
+    );
+  }
+
+  if (phase === "DAY_VOTE" && gameState.voteMode === "MAYOR_ELECTION") {
+    return getAutoNarratorSpeech(
+      "DAY_VOTE",
+      { ...gameState, voteMode: "ELIMINATION" },
+      turnNumber,
+      players
+    );
+  }
+
+  return null;
 }

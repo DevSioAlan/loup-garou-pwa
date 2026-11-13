@@ -137,6 +137,10 @@ export interface PlayerReactionEntry {
   sentAt: number;
 }
 
+export type BackdropTheme = "night" | "day" | "victory" | "defeat";
+
+export type TtsVoiceName = "Aoede" | "Kore";
+
 export interface RoomGameState {
   lovers: [string, string] | null;
   witchLifeUsed: boolean;
@@ -180,6 +184,14 @@ export interface RoomGameState {
   elderShieldTriggeredTonight: boolean;
   eventLog: GameLogEntry[];
   reactions: Record<string, PlayerReactionEntry>;
+  dayDebateSeconds: number | null;
+  mayorEnabled: boolean;
+  mayorPlayerId: string | null;
+  mayorPendingSuccessorFromId: string | null;
+  mayorElectionDone: boolean;
+  voteMode: "MAYOR_ELECTION" | "ELIMINATION";
+  primaryAudioUserId: string | null;
+  ttsVoice: TtsVoiceName;
 }
 
 export interface RoomRecord {

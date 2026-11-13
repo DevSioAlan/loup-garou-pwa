@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Biohazard,
@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Clock,
   Crosshair,
+  Crown,
   Dog,
   Eye,
   Feather,
@@ -18,7 +19,9 @@ import {
   Moon,
   Music,
   PawPrint,
+  Radio,
   RotateCcw,
+  RotateCw,
   Shield,
   Skull,
   SkipForward,
@@ -26,9 +29,13 @@ import {
   Sun,
   Trophy,
   Users,
+  Volume2,
+  VolumeX,
   Vote,
 } from "lucide-react";
 import { GAME_ROLES, ROLE_BY_ID } from "@/data/roles";
+import { playCountdownTickSound } from "@/lib/audioNarrator";
+import { didPlayerWinVictory } from "@/lib/gameEngine";
 import { triggerHaptic } from "@/lib/haptics";
 import {
   advanceRoomPhase,
@@ -43,6 +50,7 @@ import {
   submitGrandMechantTarget,
   submitHunterShotTarget,
   submitLoupBlancTarget,
+  submitMayorSuccessor,
   submitPiperTargets,
   submitPlayerReaction,
   submitRenardTargets,
@@ -66,8 +74,14 @@ interface RoomArenaProps {
   room: RoomRecord;
   players: RoomPlayerRecord[];
   currentPlayer: RoomPlayerRecord | null;
+  currentUserId: string | null;
   isHost: boolean;
   isOwner: boolean;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
+  lastAnnouncementText: string;
+  onReplayNarration: () => void;
+  onTogglePrimaryAudio: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }
 
@@ -197,8 +211,14 @@ export function RoomArena({
   room,
   players,
   currentPlayer,
+  currentUserId,
   isHost,
   isOwner,
+  soundEnabled,
+  onToggleSound,
+  lastAnnouncementText,
+  onReplayNarration,
+  onTogglePrimaryAudio,
   onRefresh,
 }: RoomArenaProps) {
   const [showCardExpanded, setShowCardExpanded] = useState(
@@ -214,6 +234,7 @@ export function RoomArena({
   const [reactionBusy, setReactionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const lastTickSecondRef = useRef<number | null>(null);
 
   const myRole = currentPlayer?.role
     ? ROLE_BY_ID[currentPlayer.role] ?? GAME_ROLES[0]
@@ -251,6 +272,32 @@ export function RoomArena({
           Math.ceil((new Date(state.phaseDeadline).getTime() - nowMs) / 1000)
         )
       : null;
+
+  useEffect(() => {
+    if (
+      room.narrator_mode !== "auto" ||
+      secondsLeft === null ||
+      secondsLeft < 1 ||
+      secondsLeft > 5 ||
+      !soundEnabled
+    ) {
+      return;
+    }
+    const isPrimaryAudio =
+      !state.primaryAudioUserId || state.primaryAudioUserId === currentUserId;
+    if (!isPrimaryAudio) return;
+
+    if (lastTickSecondRef.current !== secondsLeft) {
+      lastTickSecondRef.current = secondsLeft;
+      playCountdownTickSound(secondsLeft);
+    }
+  }, [
+    room.narrator_mode,
+    secondsLeft,
+    soundEnabled,
+    state.primaryAudioUserId,
+    currentUserId,
+  ]);
 
   const runAction = async (fn: () => Promise<void>) => {
     if (actionBusy) return;
@@ -330,14 +377,27 @@ export function RoomArena({
       ? players.find((p) => p.id === state.wolfTargetId)
       : null;
 
+  const isMayorElection =
+    room.phase === "DAY_VOTE" && state.voteMode === "MAYOR_ELECTION";
+  const isUnlimitedDayDebate =
+    room.phase === "DAY_VOTE" &&
+    !isMayorElection &&
+    state.dayDebateSeconds === null;
+
   // Décompte des votes visibles pendant DAY_VOTE ou NIGHT_WEREWOLVES
   const voteCounts = new Map<string, number>();
   for (const p of players) {
     if (p.has_voted && p.target_id) {
-      voteCounts.set(p.target_id, (voteCounts.get(p.target_id) ?? 0) + 1);
+      const weight =
+        room.phase === "DAY_VOTE" &&
+        !isMayorElection &&
+        state.mayorPlayerId === p.id
+          ? 2
+          : 1;
+      voteCounts.set(p.target_id, (voteCounts.get(p.target_id) ?? 0) + weight);
     }
   }
-  if (room.phase === "DAY_VOTE" && state.corbeauTargetId) {
+  if (room.phase === "DAY_VOTE" && !isMayorElection && state.corbeauTargetId) {
     const corbeauTargetAlive = players.some(
       (p) => p.id === state.corbeauTargetId && p.is_alive
     );
@@ -387,10 +447,81 @@ export function RoomArena({
             ? "sorciere"
             : null);
 
+  const primaryAudioPlayer = state.primaryAudioUserId
+    ? players.find((p) => p.user_id === state.primaryAudioUserId) ?? null
+    : null;
+  const isMePrimaryAudio = Boolean(
+    currentUserId && state.primaryAudioUserId === currentUserId
+  );
+  const pendingSuccessorMayor = state.mayorPendingSuccessorFromId
+    ? players.find((p) => p.id === state.mayorPendingSuccessorFromId) ?? null
+    : null;
+
   return (
     <div className="flex w-full flex-col gap-3.5">
+      {/* Barre Audio & Confort rapide en haut d'écran */}
+      <section className="glass-panel flex flex-wrap items-center justify-between gap-2 rounded-2xl px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onToggleSound}
+            className={`glass-subcard inline-flex min-h-[34px] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold transition ${
+              soundEnabled
+                ? "border-amber-300/40 text-amber-100"
+                : "text-slate-400"
+            }`}
+          >
+            {soundEnabled ? (
+              <Volume2 className="h-3.5 w-3.5 text-amber-300" />
+            ) : (
+              <VolumeX className="h-3.5 w-3.5 text-slate-400" />
+            )}
+            <span>{soundEnabled ? "Son actif" : "Muet"}</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={!lastAnnouncementText}
+            onClick={onReplayNarration}
+            className="glass-subcard inline-flex min-h-[34px] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold text-slate-200 transition hover:text-white disabled:opacity-40"
+          >
+            <RotateCw className="h-3.5 w-3.5 text-purple-300" />
+            <span>Répéter</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void onTogglePrimaryAudio()}
+          className={`glass-subcard inline-flex min-h-[34px] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold transition ${
+            isMePrimaryAudio
+              ? "border-emerald-400/55 bg-emerald-500/20 text-emerald-100"
+              : state.primaryAudioUserId
+                ? "border-amber-400/35 text-amber-200"
+                : "text-slate-300 hover:text-white"
+          }`}
+        >
+          <Radio
+            className={`h-3.5 w-3.5 ${
+              isMePrimaryAudio
+                ? "text-emerald-300"
+                : state.primaryAudioUserId
+                  ? "text-amber-300"
+                  : "text-slate-400"
+            }`}
+          />
+          <span>
+            {isMePrimaryAudio
+              ? "Audio Principal (Moi)"
+              : primaryAudioPlayer
+                ? `Audio : ${primaryAudioPlayer.pseudo}`
+                : "Appareil Audio Principal"}
+          </span>
+        </button>
+      </section>
+
       {/* En-tête de phase + minuteur */}
-      <section className="glass-panel flex items-center justify-between gap-2 rounded-2xl px-4 py-3">
+      <section className="glass-panel flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/45">
             {isNightPhase ? (
@@ -403,7 +534,7 @@ export function RoomArena({
           </span>
           <div>
             <p className="font-display text-sm font-bold text-amber-100">
-              {getPhaseLabel(room.phase, nightStep)}
+              {getPhaseLabel(room.phase, nightStep, state)}
             </p>
             <p className="text-[11px] text-slate-400">
               Tour {room.turn_number} •{" "}
@@ -412,13 +543,90 @@ export function RoomArena({
           </div>
         </div>
 
-        {room.narrator_mode === "auto" && secondsLeft !== null && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/35 bg-amber-400/15 px-2.5 py-1 text-xs font-bold text-amber-100">
-            <Clock className="h-3.5 w-3.5 text-amber-300" />
-            <span>{secondsLeft}s</span>
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {room.narrator_mode === "auto" && secondsLeft !== null && (
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold transition ${
+                secondsLeft <= 5
+                  ? "border-rose-400/70 bg-rose-500/25 text-rose-100"
+                  : "border-amber-300/35 bg-amber-400/15 text-amber-100"
+              }`}
+            >
+              <Clock
+                className={`h-3.5 w-3.5 ${
+                  secondsLeft <= 5 ? "text-rose-300" : "text-amber-300"
+                }`}
+              />
+              <span>{secondsLeft}s</span>
+            </span>
+          )}
+
+          {isUnlimitedDayDebate && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-2.5 py-1 text-[11px] font-semibold text-amber-100">
+              <Clock className="h-3 w-3 text-amber-300" />
+              <span>Illimité</span>
+            </span>
+          )}
+
+          {(isHost || isOwner) &&
+            room.phase !== "VICTORY" &&
+            room.narrator_mode === "auto" && (
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => runAction(() => advanceRoomPhase(room, players))}
+                title="Forcer le passage à la phase suivante"
+                className="glass-subcard inline-flex min-h-[30px] items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-slate-200 transition hover:border-amber-300/45 hover:text-amber-100 disabled:opacity-50"
+              >
+                <SkipForward className="h-3 w-3 text-amber-300" />
+                <span>Forcer la phase</span>
+              </button>
+            )}
+        </div>
       </section>
+
+      {/* Succession du Maire en cas de décès du Maire */}
+      {state.mayorPendingSuccessorFromId && alivePlayers.length >= 2 && (
+        <section className="glass-panel rounded-3xl border-amber-400/50 p-4 space-y-2.5">
+          <div className="flex items-center gap-2 text-amber-200">
+            <Crown className="h-4 w-4 text-amber-300" />
+            <h3 className="font-display text-sm font-bold">
+              Succession du Maire
+            </h3>
+          </div>
+
+          {currentPlayer &&
+          (currentPlayer.id === state.mayorPendingSuccessorFromId ||
+            isHost ||
+            isOwner) ? (
+            <>
+              <p className="text-xs text-slate-200">
+                {pendingSuccessorMayor
+                  ? `${pendingSuccessorMayor.pseudo} a succombé.`
+                  : "Le Maire est tombé."}{" "}
+                Désignez immédiatement le nouveau Maire (voix ×2) :
+              </p>
+              <TargetSelectionGrid
+                players={players}
+                currentPlayerId={currentPlayer.id}
+                allowSelf={currentPlayer.is_alive}
+                busy={actionBusy}
+                accentClass="border-amber-400 bg-amber-500/20 text-amber-100"
+                onSelect={(id) =>
+                  runAction(() =>
+                    submitMayorSuccessor(room, players, currentPlayer.id, id)
+                  )
+                }
+              />
+            </>
+          ) : (
+            <p className="text-xs text-slate-300">
+              {pendingSuccessorMayor?.pseudo ?? "Le Maire"} désigne son
+              successeur avant de rendre l&apos;âme...
+            </p>
+          )}
+        </section>
+      )}
 
       {actionError && (
         <div className="rounded-2xl border border-rose-400/40 bg-rose-950/60 px-3.5 py-2 text-xs text-rose-200">
@@ -1312,9 +1520,15 @@ export function RoomArena({
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Vote className="h-4 w-4 text-amber-300" />
+              {isMayorElection ? (
+                <Crown className="h-4 w-4 text-amber-300" />
+              ) : (
+                <Vote className="h-4 w-4 text-amber-300" />
+              )}
               <h3 className="font-display text-sm font-bold text-amber-100">
-                Vote du Village
+                {isMayorElection
+                  ? "Élection du Maire (Voix ×2)"
+                  : "Vote du Village"}
               </h3>
             </div>
             <span className="text-[11px] text-slate-400">
@@ -1323,11 +1537,18 @@ export function RoomArena({
             </span>
           </div>
 
+          {isMayorElection && (
+            <p className="text-xs leading-relaxed text-amber-200/90">
+              Élisez votre premier Maire : sa voix comptera double lors des
+              prochains conseils d&apos;élimination.
+            </p>
+          )}
+
           {!isAlive ? (
             <p className="text-center text-xs text-slate-400">
               Les morts ne peuvent plus voter. Observez le débat en silence.
             </p>
-          ) : isSparedIdiot ? (
+          ) : !isMayorElection && isSparedIdiot ? (
             <p className="text-center text-xs text-amber-200">
               Épargné par le village, l&apos;Idiot du Village ne peut plus voter.
             </p>
@@ -1340,7 +1561,7 @@ export function RoomArena({
                 currentPlayer?.target_id ? [currentPlayer.target_id] : []
               }
               voteCounts={voteCounts}
-              corbeauTargetId={state.corbeauTargetId}
+              corbeauTargetId={isMayorElection ? null : state.corbeauTargetId}
               busy={actionBusy}
               onSelect={(id) =>
                 currentPlayer
@@ -1408,29 +1629,129 @@ export function RoomArena({
       )}
 
       {/* ==================== 6. VICTORY ==================== */}
-      {room.phase === "VICTORY" && (
-        <section className="glass-panel rounded-3xl border-amber-300/45 p-5 text-center space-y-3">
-          <Trophy className="mx-auto h-10 w-10 text-amber-300 drop-shadow-[0_0_16px_rgba(251,191,36,0.75)]" />
-          <h2 className="font-display text-xl font-bold text-amber-100">
-            {state.winnerTitle ?? "Partie terminée"}
-          </h2>
-          <p className="text-xs leading-relaxed text-slate-200">
-            {state.winnerReason}
-          </p>
+      {room.phase === "VICTORY" && (() => {
+        const playerWon = didPlayerWinVictory(currentPlayer, state);
+        const keyMoments = state.eventLog.slice(-6);
 
-          {(isHost || isOwner) && (
-            <button
-              type="button"
-              disabled={actionBusy}
-              onClick={() => runAction(() => resetRoomToLobby(room.id))}
-              className="mt-2 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-700 to-amber-600 text-sm font-bold text-white"
-            >
-              <RotateCcw className="h-4 w-4" />
-              <span>Retourner au salon pour rejouer</span>
-            </button>
-          )}
-        </section>
-      )}
+        return (
+          <section className="glass-panel rounded-3xl border-amber-300/45 p-5 space-y-4">
+            <div className="text-center space-y-2">
+              <Trophy
+                className={`mx-auto h-10 w-10 ${
+                  playerWon === false
+                    ? "text-rose-300 drop-shadow-[0_0_16px_rgba(225,29,72,0.7)]"
+                    : "text-amber-300 drop-shadow-[0_0_16px_rgba(251,191,36,0.75)]"
+                }`}
+              />
+              {playerWon !== null && (
+                <span
+                  className={`inline-block rounded-full border px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] ${
+                    playerWon
+                      ? "border-emerald-400/50 bg-emerald-500/20 text-emerald-200"
+                      : "border-rose-400/50 bg-rose-500/20 text-rose-200"
+                  }`}
+                >
+                  {playerWon ? "Victoire" : "Défaite"}
+                </span>
+              )}
+              <h2 className="font-display text-xl font-bold text-amber-100">
+                {state.winnerTitle ?? "Partie terminée"}
+              </h2>
+              <p className="text-xs leading-relaxed text-slate-200">
+                {state.winnerReason}
+              </p>
+            </div>
+
+            {/* Révélation complète des rôles et statuts de tous les joueurs */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-200">
+                Révélation des rôles
+              </p>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {players.map((p) => {
+                  const avatarProfile = decodeAvatarToProfile(
+                    p.avatar_data,
+                    p.pseudo,
+                    p.is_owner
+                  );
+                  const roleInfo = p.role ? ROLE_BY_ID[p.role] : null;
+                  const infected = state.infectedPlayerIds.includes(p.id);
+                  return (
+                    <div
+                      key={p.id}
+                      className="glass-subcard flex items-center justify-between gap-2 rounded-2xl px-3 py-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <PlayerAvatar profile={avatarProfile} size="sm" />
+                        <div className="min-w-0">
+                          <p className="flex items-center gap-1 truncate text-xs font-semibold text-amber-50">
+                            <span className="truncate">{p.pseudo}</span>
+                            {state.mayorPlayerId === p.id && (
+                              <Crown className="h-3 w-3 shrink-0 text-amber-300" />
+                            )}
+                          </p>
+                          <p
+                            className="truncate text-[10px] font-semibold"
+                            style={{
+                              color: roleInfo?.aura.primary ?? "#cbd5e1",
+                            }}
+                          >
+                            {roleInfo?.name ?? "Inconnu"}
+                            {infected ? " (Infecté)" : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                          p.is_alive
+                            ? "bg-emerald-500/20 text-emerald-200"
+                            : "bg-rose-500/20 text-rose-200"
+                        }`}
+                      >
+                        {p.is_alive ? "En vie" : "Éliminé"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Moments clés de la partie */}
+            {keyMoments.length > 0 && (
+              <div className="glass-subcard rounded-2xl p-3 space-y-1.5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-200">
+                  Moments clés
+                </p>
+                {keyMoments.map((entry) => (
+                  <p
+                    key={entry.id}
+                    className="text-[11px] leading-relaxed text-slate-300"
+                  >
+                    • {entry.text}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {(isHost || isOwner) ? (
+              <button
+                type="button"
+                disabled={actionBusy}
+                onClick={() => runAction(() => resetRoomToLobby(room.id, room))}
+                className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-amber-600 to-rose-700 text-sm font-bold text-white shadow-[0_10px_28px_rgba(16,185,129,0.28)] transition hover:brightness-110"
+              >
+                <RotateCcw className="h-4 w-4" />
+                <span>Rejouer ensemble</span>
+              </button>
+            ) : (
+              <p className="text-center text-xs text-slate-300">
+                L&apos;hôte peut lancer une nouvelle manche ensemble depuis le
+                même salon.
+              </p>
+            )}
+          </section>
+        );
+      })()}
 
       {/* ==================== LISTE DES JOUEURS (ANTI-TRICHE TOTALE) ==================== */}
       <section className="glass-panel rounded-3xl p-4 space-y-2.5">
@@ -1474,7 +1795,7 @@ export function RoomArena({
                 <div className="flex min-w-0 items-center gap-2.5">
                   <PlayerAvatar profile={avatarProfile} size="sm" />
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <p
                         className={`truncate text-xs font-semibold ${
                           p.is_alive
@@ -1485,6 +1806,13 @@ export function RoomArena({
                         {p.pseudo}
                         {p.id === currentPlayer?.id ? " (Moi)" : ""}
                       </p>
+
+                      {state.mayorPlayerId === p.id && p.is_alive && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/45 bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">
+                          <Crown className="h-2.5 w-2.5" />
+                          Maire ×2
+                        </span>
+                      )}
 
                       {hasCorbeauCurse && (
                         <span className="rounded-full border border-violet-400/40 bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-bold text-violet-200">

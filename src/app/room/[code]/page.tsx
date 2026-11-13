@@ -12,10 +12,15 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import {
   playPhaseSoundEffect,
+  preloadFrenchNarration,
   speakFrenchNarration,
   stopFrenchNarration,
   unlockAudioPlayback,
 } from "@/lib/audioNarrator";
+import {
+  didPlayerWinVictory,
+  predictNextNarrationText,
+} from "@/lib/gameEngine";
 import { ensurePlayerIdentity } from "@/lib/playerIdentity";
 import { usePlayerProfile } from "@/lib/profileStorage";
 import {
@@ -24,13 +29,18 @@ import {
   getAutoNarratorSpeech,
   isEffectiveWolf,
   joinRoomInSupabase,
+  updateRoomLobbySettings,
 } from "@/lib/roomService";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { BloodMoonBackdrop } from "@/components/ui/BloodMoonBackdrop";
 import { RoomLobby } from "@/components/room/RoomLobby";
 import { RoomArena } from "@/components/room/RoomArena";
 import { RoomOwnerPanel } from "@/components/room/RoomOwnerPanel";
-import type { RoomPlayerRecord, RoomRecord } from "@/types/game";
+import type {
+  BackdropTheme,
+  RoomPlayerRecord,
+  RoomRecord,
+} from "@/types/game";
 
 interface RoomPageProps {
   params: Promise<{ code: string }>;
@@ -170,12 +180,30 @@ function RoomContent({ params }: RoomPageProps) {
     };
   }, [room?.id, refreshSnapshot]);
 
-  const isDayAtmosphere = Boolean(
-    room &&
-      (room.phase === "DAY_ANNOUNCEMENT" ||
-        room.phase === "DAY_VOTE" ||
-        room.phase === "VICTORY")
-  );
+  const currentPlayer =
+    players.find((p) => p.user_id === userId) ?? null;
+
+  const backdropTheme: BackdropTheme = (() => {
+    if (!room) return "night";
+    if (room.phase === "VICTORY") {
+      const won = didPlayerWinVictory(currentPlayer, room.game_state);
+      return won === false ? "defeat" : "victory";
+    }
+    if (room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE") {
+      return "day";
+    }
+    return "night";
+  })();
+
+  const currentAnnouncementText =
+    room && room.phase !== "LOBBY"
+      ? getAutoNarratorSpeech(
+          room.phase,
+          room.game_state,
+          room.turn_number,
+          players
+        )
+      : "";
 
   // Débloque la lecture audio navigateur dès la première interaction utilisateur
   useEffect(() => {
@@ -188,27 +216,34 @@ function RoomContent({ params }: RoomPageProps) {
     };
   }, []);
 
-  // Synchronise le thème atmosphérique Jour/Nuit sur le document (verre ambré vs verre nuit)
+  // Synchronise le thème atmosphérique dynamique sur le document (verre nuit / jour / victoire / défaite)
   useEffect(() => {
-    document.documentElement.dataset.atmosphere = isDayAtmosphere
-      ? "day"
-      : "night";
+    document.documentElement.dataset.atmosphere = backdropTheme;
     return () => {
       delete document.documentElement.dataset.atmosphere;
     };
-  }, [isDayAtmosphere]);
+  }, [backdropTheme]);
 
-  // 3. Narrateur Automatique : synthèse vocale féminine naturelle + effets sonores au changement de phase/étape
+  // 3. Narrateur Automatique + Préchargement anticipé Gemini TTS + Filtrage Appareil Audio Principal
   useEffect(() => {
     if (!room || room.narrator_mode !== "auto" || room.phase === "LOBBY") {
       return;
     }
 
-    const stepKey = `${room.phase}-${room.game_state.nightStep ?? "main"}-${room.turn_number}`;
+    const stepKey = `${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.turn_number}`;
     if (lastSpokenKeyRef.current === stepKey) return;
     lastSpokenKeyRef.current = stepKey;
 
-    if (!soundEnabled) return;
+    const primaryId = room.game_state.primaryAudioUserId;
+    const isPrimaryDevice = !primaryId || primaryId === userId;
+    if (!soundEnabled || !isPrimaryDevice) return;
+
+    const tone =
+      room.phase === "VICTORY"
+        ? "victory"
+        : room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE"
+          ? "day"
+          : "night";
 
     playPhaseSoundEffect(room.phase);
     const speech = getAutoNarratorSpeech(
@@ -218,9 +253,29 @@ function RoomContent({ params }: RoomPageProps) {
       players
     );
     if (speech) {
-      speakFrenchNarration(speech);
+      void speakFrenchNarration(speech, {
+        voice: room.game_state.ttsVoice,
+        tone,
+      });
     }
-  }, [room, players, soundEnabled]);
+
+    const predictedNext = predictNextNarrationText(
+      room.phase,
+      room.game_state,
+      room.turn_number,
+      players
+    );
+    if (predictedNext) {
+      const nextTone =
+        room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE"
+          ? "day"
+          : "night";
+      preloadFrenchNarration(predictedNext, {
+        voice: room.game_state.ttsVoice,
+        tone: nextTone,
+      });
+    }
+  }, [room, players, soundEnabled, userId]);
 
   // 4. Pilotage automatique des minuteurs & complétion anticipée par l'hôte en Mode Auto
   const isHost = Boolean(room && userId && room.host_user_id === userId);
@@ -307,9 +362,12 @@ function RoomContent({ params }: RoomPageProps) {
           actionComplete = gs.piperTargetsTonight.length > 0;
         }
       } else if (room.phase === "DAY_VOTE") {
-        const eligible = players.filter(
-          (p) => p.is_alive && !gs.idiotSparedPlayerIds.includes(p.id)
-        );
+        const eligible =
+          gs.voteMode === "MAYOR_ELECTION"
+            ? players.filter((p) => p.is_alive)
+            : players.filter(
+                (p) => p.is_alive && !gs.idiotSparedPlayerIds.includes(p.id)
+              );
         if (eligible.length > 0 && eligible.every((p) => p.has_voted)) {
           actionComplete = true;
         }
@@ -336,12 +394,42 @@ function RoomContent({ params }: RoomPageProps) {
     return () => window.clearInterval(timer);
   }, [room, players, isHost, refreshSnapshot]);
 
-  const currentPlayer =
-    players.find((p) => p.user_id === userId) ?? null;
+  const handleToggleSound = () => {
+    unlockAudioPlayback();
+    setSoundEnabled((prev) => {
+      if (prev) stopFrenchNarration();
+      return !prev;
+    });
+  };
+
+  const handleReplayNarration = () => {
+    if (!room || !currentAnnouncementText) return;
+    unlockAudioPlayback();
+    const tone =
+      room.phase === "VICTORY"
+        ? "victory"
+        : room.phase === "DAY_ANNOUNCEMENT" || room.phase === "DAY_VOTE"
+          ? "day"
+          : "night";
+    void speakFrenchNarration(currentAnnouncementText, {
+      voice: room.game_state.ttsVoice,
+      tone,
+    });
+  };
+
+  const handleTogglePrimaryAudio = async () => {
+    if (!room || !userId) return;
+    unlockAudioPlayback();
+    const isCurrentlyPrimary = room.game_state.primaryAudioUserId === userId;
+    await updateRoomLobbySettings(room, {
+      primaryAudioUserId: isCurrentlyPrimary ? null : userId,
+    });
+    await refreshSnapshot();
+  };
 
   return (
     <>
-      <BloodMoonBackdrop theme={isDayAtmosphere ? "day" : "night"} />
+      <BloodMoonBackdrop theme={backdropTheme} />
 
       {/* Barre supérieure du salon */}
       <header className="flex items-center justify-between gap-2">
@@ -366,13 +454,7 @@ function RoomContent({ params }: RoomPageProps) {
 
           <button
             type="button"
-            onClick={() => {
-              unlockAudioPlayback();
-              setSoundEnabled((prev) => {
-                if (prev) stopFrenchNarration();
-                return !prev;
-              });
-            }}
+            onClick={handleToggleSound}
             aria-label={soundEnabled ? "Couper le son" : "Activer le son"}
             className="glass-panel flex h-9 w-9 items-center justify-center rounded-full text-amber-200"
           >
@@ -419,12 +501,18 @@ function RoomContent({ params }: RoomPageProps) {
             />
           ) : (
             <RoomArena
-              key={`${room.phase}-${room.game_state.nightStep ?? "main"}-${room.turn_number}`}
+              key={`${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.turn_number}`}
               room={room}
               players={players}
               currentPlayer={currentPlayer}
+              currentUserId={userId}
               isHost={isHost}
               isOwner={profile.isOwner}
+              soundEnabled={soundEnabled}
+              onToggleSound={handleToggleSound}
+              lastAnnouncementText={currentAnnouncementText}
+              onReplayNarration={handleReplayNarration}
+              onTogglePrimaryAudio={handleTogglePrimaryAudio}
               onRefresh={refreshSnapshot}
             />
           )}

@@ -394,6 +394,7 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
  */
 export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
   const [isRevealed, setIsRevealed] = useState(false);
+  const [isFlipping, setIsFlipping] = useState(false);
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
   const [pulseWave, setPulseWave] = useState(0);
 
@@ -531,11 +532,16 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
               ? { type: "spring", stiffness: 250, damping: 24, mass: 0.84 }
               : { type: "spring", stiffness: 460, damping: 32, mass: 0.58 }
           }
+          onAnimationStart={() => setIsFlipping(true)}
+          onAnimationComplete={() => setIsFlipping(false)}
           style={{
             transformStyle: "preserve-3d",
             WebkitTransformStyle: "preserve-3d",
+            transform: "translate3d(0, 0, 0)",
+            willChange:
+              isRevealed || isFlipping ? "transform, opacity" : "auto",
           }}
-          className="preserve-3d relative aspect-[3/4.2] w-full will-change-transform"
+          className="preserve-3d relative aspect-[3/4.2] w-full"
         >
           {/* FACE CACHÉE (0°) — Dos de carte Dark Frosted Glass */}
           <div
@@ -562,8 +568,9 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
                 opacity: isRevealed ? [0, 0.75, 0] : 0,
               }}
               transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-none absolute inset-y-0 -left-1/2 w-2/3 -skew-x-12 will-change-transform"
+              className="pointer-events-none absolute inset-y-0 -left-1/2 w-2/3 -skew-x-12"
               style={{
+                willChange: isRevealed ? "transform, opacity" : "auto",
                 background:
                   "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.22) 50%, transparent 100%)",
               }}
@@ -592,7 +599,7 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ duration: 48, repeat: Infinity, ease: "linear" }}
-                className="flex h-32 w-32 items-center justify-center rounded-full border border-dashed border-amber-300/30 will-change-transform"
+                className="flex h-32 w-32 items-center justify-center rounded-full border border-dashed border-amber-300/30"
               >
                 <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/15 bg-gradient-to-b from-rose-950/55 via-[#12131C]/80 to-[#090A0F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),inset_0_0_24px_rgba(225,29,72,0.28)]" />
               </motion.div>
@@ -644,8 +651,9 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
                 opacity: isRevealed ? [0, 0.85, 0] : 0,
               }}
               transition={{ duration: 0.72, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -skew-x-12 will-change-transform"
+              className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -skew-x-12"
               style={{
+                willChange: isRevealed ? "transform, opacity" : "auto",
                 background:
                   "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.26) 48%, rgba(255, 255, 255, 0.08) 60%, transparent 100%)",
               }}
@@ -685,7 +693,7 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
             {/* Emblème du rôle */}
             <div className="relative z-10 my-1 flex flex-col items-center text-center">
               <div
-                className="mb-3 flex h-20 w-20 items-center justify-center rounded-full border border-white/15 bg-black/40 backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]"
+                className="glass-subcard mb-3 flex h-20 w-20 items-center justify-center rounded-full"
                 style={{
                   boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 28px ${role.aura.primary}48, inset 0 0 18px ${role.aura.primary}2E`,
                 }}
@@ -711,8 +719,8 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
               </p>
             </div>
 
-            {/* Pouvoir & Lore sur verre dépoli interne */}
-            <div className="relative z-10 flex flex-col gap-2 rounded-2xl border border-white/12 bg-black/40 p-3 text-center backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
+            {/* Pouvoir & Lore sur verre dépoli interne optimisé mobile */}
+            <div className="glass-subcard relative z-10 flex flex-col gap-2 rounded-2xl p-3 text-center">
               <p className="text-xs leading-relaxed text-slate-100/95">
                 {role.ability}
               </p>
@@ -728,7 +736,7 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
                 e.stopPropagation();
                 handleRevealEnd();
               }}
-              className="relative z-10 rounded-full border border-white/15 bg-black/40 px-3 py-1 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-200/85 backdrop-blur-md transition hover:bg-black/60"
+              className="glass-subcard relative z-10 rounded-full px-3 py-1 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-200/85 transition hover:bg-black/60"
             >
               Relâcher ou toucher pour masquer
             </button>

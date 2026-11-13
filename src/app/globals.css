@@ -138,31 +138,128 @@ body {
   }
 }
 
+@keyframes star-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translate3d(0, 0, 0) scale(0.85);
+  }
+  50% {
+    opacity: 0.92;
+    transform: translate3d(0, 0, 0) scale(1.18);
+  }
+}
+
+@keyframes solar-rays-spin {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate3d(0, 0, 0) rotate(360deg);
+  }
+}
+
+@keyframes golden-float {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.75);
+  }
+  25% {
+    opacity: 0.75;
+  }
+  75% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(14px, -46px, 0) scale(1.15);
+  }
+}
+
+@keyframes victory-ember-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0) scale(0.7);
+  }
+  20% {
+    opacity: 0.85;
+  }
+  80% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-10px, -68px, 0) scale(1.25);
+  }
+}
+
+@keyframes defeat-ash-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(-8px, -24px, 0) scale(0.85);
+  }
+  25% {
+    opacity: 0.6;
+  }
+  75% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(16px, 64px, 0) scale(0.6);
+  }
+}
+
+.gpu-layer {
+  transform: translate3d(0, 0, 0);
+}
+
 .animate-aurora-breathe {
   animation: aurora-breathe 14s ease-in-out infinite;
-  will-change: transform, opacity;
 }
 
 .animate-aurora-drift-left {
   animation: aurora-drift-left 22s ease-in-out infinite;
-  will-change: transform, opacity;
 }
 
 .animate-aurora-drift-right {
   animation: aurora-drift-right 26s ease-in-out infinite;
-  will-change: transform, opacity;
 }
 
 .animate-mist-glide {
   animation: mist-glide 19s ease-in-out infinite;
-  will-change: transform, opacity;
+}
+
+.animate-star-twinkle {
+  animation: star-twinkle 4.5s ease-in-out infinite;
+}
+
+.animate-solar-rays {
+  animation: solar-rays-spin 54s linear infinite;
+}
+
+.animate-golden-float {
+  animation: golden-float 9s ease-in-out infinite;
+}
+
+.animate-victory-ember {
+  animation: victory-ember-rise 6.5s ease-out infinite;
+}
+
+.animate-defeat-ash {
+  animation: defeat-ash-fall 7.5s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-aurora-breathe,
   .animate-aurora-drift-left,
   .animate-aurora-drift-right,
-  .animate-mist-glide {
+  .animate-mist-glide,
+  .animate-star-twinkle,
+  .animate-solar-rays,
+  .animate-golden-float,
+  .animate-victory-ember,
+  .animate-defeat-ash {
     animation: none;
   }
 }
@@ -178,7 +275,7 @@ body {
   }
 }
 
-/* Verre dépoli sombre style Apple (Dark Frosted Glass / visionOS) + transition Jour/Nuit */
+/* Verre dépoli sombre style Apple (Dark Frosted Glass / visionOS) + transition ambiances */
 @layer components {
   .glass-panel {
     background:
@@ -215,6 +312,33 @@ body {
       border-color 0.9s ease;
   }
 
+  .glass-subcard {
+    background: rgba(10, 11, 16, 0.62);
+    backdrop-filter: blur(12px) saturate(135%);
+    -webkit-backdrop-filter: blur(12px) saturate(135%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+
+  @media (max-width: 639px) {
+    .glass-panel {
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+    }
+
+    .glass-pill {
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+    }
+
+    /* Évite le double blur GPU coûteux dans les cartes imbriquées sur mobile */
+    .glass-subcard {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      background: rgba(10, 11, 16, 0.78);
+    }
+  }
+
   [data-atmosphere="day"] .glass-panel {
     background:
       linear-gradient(
@@ -234,5 +358,47 @@ body {
   [data-atmosphere="day"] .glass-pill {
     background: rgba(30, 20, 14, 0.58);
     border: 1px solid rgba(251, 191, 36, 0.22);
+  }
+
+  [data-atmosphere="victory"] .glass-panel {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(167, 243, 208, 0.08) 0%,
+        rgba(212, 175, 55, 0.04) 42%,
+        rgba(255, 255, 255, 0) 100%
+      ),
+      rgba(9, 20, 16, 0.64);
+    border: 1px solid rgba(52, 211, 153, 0.26);
+    box-shadow:
+      inset 0 1px 0 rgba(253, 230, 138, 0.24),
+      0 24px 56px -12px rgba(4, 18, 12, 0.72),
+      0 6px 24px rgba(16, 185, 129, 0.18);
+  }
+
+  [data-atmosphere="victory"] .glass-pill {
+    background: rgba(9, 22, 17, 0.64);
+    border: 1px solid rgba(251, 191, 36, 0.26);
+  }
+
+  [data-atmosphere="defeat"] .glass-panel {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(192, 132, 252, 0.065) 0%,
+        rgba(155, 27, 48, 0.05) 42%,
+        rgba(255, 255, 255, 0) 100%
+      ),
+      rgba(16, 9, 18, 0.68);
+    border: 1px solid rgba(190, 24, 93, 0.26);
+    box-shadow:
+      inset 0 1px 0 rgba(216, 180, 254, 0.16),
+      0 24px 56px -12px rgba(8, 3, 10, 0.78),
+      0 6px 24px rgba(136, 19, 55, 0.2);
+  }
+
+  [data-atmosphere="defeat"] .glass-pill {
+    background: rgba(18, 10, 20, 0.66);
+    border: 1px solid rgba(190, 24, 93, 0.24);
   }
 }

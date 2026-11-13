@@ -51,6 +51,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
       text?: unknown;
+      voice?: unknown;
+      tone?: unknown;
     } | null;
     const rawText = typeof body?.text === "string" ? body.text.trim() : "";
 
@@ -59,6 +61,16 @@ export async function POST(request: NextRequest) {
     }
 
     const text = rawText.slice(0, 600);
+    const voiceName = body?.voice === "Kore" ? "Kore" : "Aoede";
+    const tone =
+      body?.tone === "day" || body?.tone === "victory" ? body.tone : "night";
+    const styleDirective =
+      tone === "victory"
+        ? "Lis à voix haute en français avec une voix féminine naturelle, lumineuse, chaleureuse et solennelle, en marquant une belle pause finale :"
+        : tone === "day"
+          ? "Lis à voix haute en français avec une voix féminine naturelle, claire, posée et engageante, avec des intonations vivantes :"
+          : "Lis à voix haute en français ce texte de Maître du Jeu de Loup-Garou avec une voix féminine naturelle, posée, calme et immersive, avec des pauses respirées :";
+    const promptText = `${styleDirective}\n\n${text}`;
     const cloudTtsKey = process.env.GOOGLE_CLOUD_TTS_API_KEY?.trim();
     const geminiKey = process.env.GEMINI_API_KEY?.trim();
 
@@ -116,7 +128,7 @@ export async function POST(request: NextRequest) {
           contents: [
             {
               role: "user",
-              parts: [{ text }],
+              parts: [{ text: promptText }],
             },
           ],
           generationConfig: {
@@ -124,7 +136,7 @@ export async function POST(request: NextRequest) {
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
-                  voiceName: "Aoede",
+                  voiceName,
                 },
               },
             },

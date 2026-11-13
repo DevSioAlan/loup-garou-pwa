@@ -31,8 +31,29 @@ export function RoleStrip({
     moved: false,
   });
   const [isDragging, setIsDragging] = useState(false);
+  const [isInteracting, setIsInteracting] = useState(false);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
+  const interactTimerRef = useRef<number | null>(null);
+
+  const scheduleInteractReset = () => {
+    setIsInteracting(true);
+    if (interactTimerRef.current !== null) {
+      window.clearTimeout(interactTimerRef.current);
+    }
+    interactTimerRef.current = window.setTimeout(() => {
+      setIsInteracting(false);
+      interactTimerRef.current = null;
+    }, 180);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (interactTimerRef.current !== null) {
+        window.clearTimeout(interactTimerRef.current);
+      }
+    };
+  }, []);
 
   const updateScrollButtons = useCallback(() => {
     const el = scrollRef.current;
@@ -130,8 +151,22 @@ export function RoleStrip({
       {/* Piste scrollable (tactile + souris drag + molette) */}
       <div
         ref={scrollRef}
-        onScroll={updateScrollButtons}
-        onMouseDown={handleMouseDown}
+        onScroll={() => {
+          updateScrollButtons();
+          scheduleInteractReset();
+        }}
+        onMouseDown={(e) => {
+          scheduleInteractReset();
+          handleMouseDown(e);
+        }}
+        onTouchStart={scheduleInteractReset}
+        onTouchMove={scheduleInteractReset}
+        style={{
+          touchAction: "pan-x pan-y",
+          transform: "translate3d(0, 0, 0)",
+          willChange:
+            isDragging || isInteracting ? "transform, opacity" : "auto",
+        }}
         className={`no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-0.5 py-1 select-none ${
           isDragging ? "cursor-grabbing" : "cursor-grab"
         }`}

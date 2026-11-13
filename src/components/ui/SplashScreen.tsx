@@ -31,8 +31,9 @@ export function SplashScreen({ visible, onDismiss }: SplashScreenProps) {
         <motion.div
           key="splash-overlay"
           initial={{ opacity: 1 }}
-          exit={{ opacity: 0, scale: 1.03 }}
-          transition={{ duration: 0.45, ease: "easeInOut" }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.24, ease: "easeOut" }}
+          style={{ transform: "translate3d(0, 0, 0)" }}
           className="fixed inset-0 z-50 flex flex-col items-center justify-between overflow-hidden bg-[#090A0F] px-6 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]"
         >
           {/* Halo ambiant Lune de Sang */}
@@ -77,12 +78,13 @@ export function SplashScreen({ visible, onDismiss }: SplashScreenProps) {
                 transition={{ duration: 1.0, ease: "easeOut" }}
                 className="relative h-28 w-28 overflow-hidden rounded-full bg-gradient-to-br from-rose-500 via-rose-800 to-[#2E0616] shadow-[0_0_50px_rgba(225,29,72,0.65)]"
               >
-                {/* Ombre d'éclipse glissant pour révéler la lune de sang */}
+                {/* Ombre d'éclipse glissant sans filtre coûteux pour révéler la lune de sang */}
                 <motion.div
                   initial={{ x: 0, y: 0 }}
                   animate={{ x: 26, y: -18 }}
-                  transition={{ duration: 1.35, ease: [0.22, 1, 0.36, 1] }}
-                  className="absolute inset-1 rounded-full bg-[#090A0F]/90 blur-[1px]"
+                  transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ transform: "translate3d(0, 0, 0)" }}
+                  className="absolute inset-1 rounded-full bg-[#090A0F]/90"
                 />
               </motion.div>
             </div>

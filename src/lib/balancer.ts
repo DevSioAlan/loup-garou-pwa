@@ -295,3 +295,135 @@ export function drawRandomRoleFromComposition(
   const index = Math.floor(Math.random() * filtered.length);
   return filtered[index];
 }
+
+export type LobbyRolePresetId =
+  | "rapide-classique"
+  | "enquete-deduction"
+  | "chaos-alliances";
+
+export interface LobbyRolePresetMeta {
+  id: LobbyRolePresetId;
+  label: string;
+  description: string;
+}
+
+export const LOBBY_ROLE_PRESETS: LobbyRolePresetMeta[] = [
+  {
+    id: "rapide-classique",
+    label: "Rapide & Classique",
+    description: "Loups, Voyante, Sorcière, Chasseur & Villageois",
+  },
+  {
+    id: "enquete-deduction",
+    label: "Enquête & Déduction",
+    description: "Voyante, Renard, Corbeau, Montreur d'Ours & Salvateur",
+  },
+  {
+    id: "chaos-alliances",
+    label: "Chaos & Alliances",
+    description: "Cupidon, Infect Père, Servante, Flûte & Enfant Sauvage",
+  },
+];
+
+/**
+ * Construit en 1 clic une composition thématique adaptée au nombre réel de joueurs dans le salon.
+ */
+export function buildLobbyPresetComposition(
+  presetId: LobbyRolePresetId,
+  rawPlayerCount: number
+): RoleComposition {
+  const playerCount = Math.max(4, Math.min(20, rawPlayerCount));
+  const composition: RoleComposition = Object.fromEntries(
+    GAME_ROLES.map((role) => [role.id, 0])
+  );
+
+  let targetWolves = 1;
+  if (playerCount >= 6 && playerCount <= 9) targetWolves = 2;
+  else if (playerCount >= 10 && playerCount <= 14) targetWolves = 3;
+  else if (playerCount >= 15) targetWolves = 4;
+
+  const assignList = (ids: string[], limit: number): number => {
+    let added = 0;
+    for (const id of ids) {
+      if (added >= limit) break;
+      if (composition[id] === 0 && ROLE_BY_ID[id]) {
+        composition[id] = 1;
+        added += 1;
+      }
+    }
+    return added;
+  };
+
+  if (presetId === "rapide-classique") {
+    composition["loup-garou"] = targetWolves;
+    let remaining = playerCount - targetWolves;
+    const specials = assignList(
+      ["voyante", "sorciere", "chasseur", "cupidon", "salvateur", "ancien"],
+      Math.max(1, remaining - (playerCount >= 6 ? 2 : 1))
+    );
+    remaining -= specials;
+    composition["simple-villageois"] = Math.max(0, remaining);
+    return composition;
+  }
+
+  if (presetId === "enquete-deduction") {
+    if (playerCount >= 8 && targetWolves >= 2) {
+      composition["grand-mechant-loup"] = 1;
+      composition["loup-garou"] = targetWolves - 1;
+    } else {
+      composition["loup-garou"] = targetWolves;
+    }
+    let remaining = playerCount - targetWolves;
+    const specials = assignList(
+      [
+        "voyante",
+        "renard",
+        "corbeau",
+        "montreur-dours",
+        "salvateur",
+        "petite-fille",
+        "sorciere",
+        "chevalier-epee-rouillee",
+        "ancien",
+      ],
+      Math.max(2, remaining - 1)
+    );
+    remaining -= specials;
+    composition["simple-villageois"] = Math.max(0, remaining);
+    return composition;
+  }
+
+  // chaos-alliances
+  let assignedWolves = 0;
+  if (playerCount >= 7) {
+    composition["infect-pere-des-loups"] = 1;
+    assignedWolves += 1;
+  }
+  if (playerCount >= 9 && assignedWolves < targetWolves) {
+    composition["loup-garou-blanc"] = 1;
+    assignedWolves += 1;
+  }
+  composition["loup-garou"] = Math.max(1, targetWolves - assignedWolves);
+  const actualWolves =
+    (composition["infect-pere-des-loups"] ?? 0) +
+    (composition["loup-garou-blanc"] ?? 0) +
+    (composition["loup-garou"] ?? 0);
+
+  let remaining = playerCount - actualWolves;
+  const chaosPool = [
+    "cupidon",
+    "servante-devouee",
+    "enfant-sauvage",
+    "chevalier-epee-rouillee",
+    "joueur-de-flute",
+    "chasseur",
+    "sorciere",
+    "corbeau",
+    "idiot-du-village",
+    "ange",
+  ];
+  const specials = assignList(chaosPool, Math.max(2, remaining - 1));
+  remaining -= specials;
+  composition["simple-villageois"] = Math.max(0, remaining);
+  return composition;
+}
