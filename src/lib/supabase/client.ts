@@ -1,28 +1,40 @@
 import { createBrowserClient } from "@supabase/ssr";
 
 /**
+ * Lit l'URL et la clé publique Supabase depuis l'environnement client.
+ * Accepte NEXT_PUBLIC_SUPABASE_ANON_KEY ainsi que NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (Vercel/Supabase).
+ */
+export function getSupabaseClientEnv(): {
+  url: string | undefined;
+  anonKey: string | undefined;
+} {
+  return {
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    anonKey:
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  };
+}
+
+/**
  * Vérifie si les variables d'environnement Supabase sont configurées.
  */
 export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  );
+  const { url, anonKey } = getSupabaseClientEnv();
+  return Boolean(url && anonKey);
 }
 
 /**
  * Crée un client Supabase côté navigateur (Auth, Realtime, Storage).
- * Utilisable dès que NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY sont définis.
  */
 export function createClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { url, anonKey } = getSupabaseClientEnv();
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!url || !anonKey) {
     throw new Error(
-      "Variables Supabase manquantes : configurez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans .env.local"
+      "Variables Supabase manquantes : configurez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY (ou NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)."
     );
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  return createBrowserClient(url, anonKey);
 }

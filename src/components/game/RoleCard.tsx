@@ -122,7 +122,7 @@ export function RoleCard({ role }: RoleCardProps) {
             handleRevealEnd();
           }
         }}
-        className="perspective-1200 no-callout select-none touch-none cursor-pointer rounded-[26px] outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 focus-visible:ring-offset-4 focus-visible:ring-offset-[#090A0F]"
+        className="perspective-1200 no-callout select-none touch-pan-y cursor-pointer rounded-[26px] outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70 focus-visible:ring-offset-4 focus-visible:ring-offset-[#090A0F]"
       >
         <motion.div
           animate={{

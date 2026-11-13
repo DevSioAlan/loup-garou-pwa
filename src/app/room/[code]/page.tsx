@@ -48,7 +48,7 @@ function RoomSuspenseFallback() {
 
 export default function RoomPage({ params }: RoomPageProps) {
   return (
-    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-hidden px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
+    <main className="relative mx-auto flex min-h-dvh w-full max-w-lg flex-col gap-4 overflow-x-clip px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
       <BloodMoonBackdrop />
       <Suspense fallback={<RoomSuspenseFallback />}>
         <RoomContent params={params} />

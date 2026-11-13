@@ -80,6 +80,7 @@ export function RoleDemoShowcase() {
   const [draftRoomCode, setDraftRoomCode] = useState<string | null>(null);
   const [narratorMode, setNarratorMode] = useState<NarratorMode>("auto");
   const [creatingRoom, setCreatingRoom] = useState(false);
+  const [roomCreateError, setRoomCreateError] = useState<string | null>(null);
 
   // État local de démonstration pour le Mode Owner
   const [currentPhase, setCurrentPhase] =
@@ -191,13 +192,18 @@ export function RoleDemoShowcase() {
     triggerHaptic(25);
     const code = generateRoomCode();
     setDraftRoomCode(code);
+    setRoomCreateError(null);
     setActiveTab("configurator");
     setPhaseInfo(null);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   };
 
   const handleLaunchRoom = async () => {
     if (creatingRoom) return;
     setCreatingRoom(true);
+    setRoomCreateError(null);
     setPhaseInfo(null);
     triggerHaptic(25);
 
@@ -212,11 +218,12 @@ export function RoleDemoShowcase() {
       });
       router.push(`/room/${created.code}`);
     } catch (err) {
-      setPhaseInfo(
+      const message =
         err instanceof Error
-          ? `Erreur Supabase : ${err.message}. Avez-vous exécuté supabase/schema.sql ?`
-          : "Impossible de créer le salon sur Supabase."
-      );
+          ? err.message
+          : "Impossible de créer le salon sur Supabase.";
+      setRoomCreateError(message);
+      setPhaseInfo(`Erreur Supabase : ${message}`);
     } finally {
       setCreatingRoom(false);
     }
@@ -399,6 +406,19 @@ export function RoleDemoShowcase() {
                       <span>Narrateur Humain</span>
                     </button>
                   </div>
+
+                  {roomCreateError && (
+                    <div
+                      role="alert"
+                      className="flex items-start gap-2 rounded-2xl border border-rose-400/45 bg-rose-500/15 px-3 py-2.5 text-xs text-rose-100"
+                    >
+                      <ShieldAlert
+                        className="mt-0.5 h-4 w-4 shrink-0 text-rose-300"
+                        aria-hidden="true"
+                      />
+                      <span className="leading-relaxed">{roomCreateError}</span>
+                    </div>
+                  )}
 
                   <button
                     type="button"

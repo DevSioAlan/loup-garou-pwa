@@ -27,9 +27,27 @@ function getOrCreateLocalUuid(): string {
   }
 }
 
+function withAuthTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error("Auth timeout"));
+    }, ms);
+    promise.then(
+      (val) => {
+        window.clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 /**
  * Identifie le téléphone sans friction via supabase.auth.signInAnonymously(),
- * avec repli automatique sur un UUID local persistant si l'auth anonyme est désactivée.
+ * avec repli automatique (et timeout court de 4 s) sur un UUID local persistant.
  */
 export async function ensurePlayerIdentity(): Promise<PlayerIdentity> {
   if (!isSupabaseConfigured()) {
@@ -38,7 +56,10 @@ export async function ensurePlayerIdentity(): Promise<PlayerIdentity> {
 
   try {
     const supabase = createClient();
-    const { data: sessionData } = await supabase.auth.getSession();
+    const { data: sessionData } = await withAuthTimeout(
+      supabase.auth.getSession(),
+      4000
+    );
 
     if (sessionData.session?.user?.id) {
       return {
@@ -47,7 +68,10 @@ export async function ensurePlayerIdentity(): Promise<PlayerIdentity> {
       };
     }
 
-    const { data: anonData, error } = await supabase.auth.signInAnonymously();
+    const { data: anonData, error } = await withAuthTimeout(
+      supabase.auth.signInAnonymously(),
+      4000
+    );
     if (!error && anonData.user?.id) {
       return {
         userId: anonData.user.id,
@@ -55,7 +79,7 @@ export async function ensurePlayerIdentity(): Promise<PlayerIdentity> {
       };
     }
   } catch {
-    // Repli silencieux sur l'UUID local
+    // Repli silencieux sur l'UUID local si l'auth anonyme est désactivée ou lente
   }
 
   return { userId: getOrCreateLocalUuid(), source: "local_uuid" };

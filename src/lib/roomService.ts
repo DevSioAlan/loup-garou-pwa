@@ -49,6 +49,106 @@ function normalizeRoom(row: Record<string, unknown>): RoomRecord {
   };
 }
 
+function withRequestTimeout<T>(
+  promise: PromiseLike<T>,
+  ms = 12000,
+  timeoutMessage = "Délai dépassé lors de la connexion à Supabase."
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer =
+      typeof window !== "undefined"
+        ? window.setTimeout(() => reject(new Error(timeoutMessage)), ms)
+        : null;
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (timer !== null) window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        if (timer !== null) window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+function formatSupabaseError(
+  error: { code?: string; message?: string; details?: string } | null | undefined,
+  fallback: string
+): string {
+  if (!error) return fallback;
+  const msg = error.message || fallback;
+  if (error.code === "42P01" || msg.includes("schema cache")) {
+    return `${msg} — Exécutez supabase/schema.sql dans Supabase SQL Editor.`;
+  }
+  if (error.code === "42501" || msg.toLowerCase().includes("row-level security")) {
+    return `Accès refusé (RLS) : ${msg}. Vérifiez les politiques dans supabase/schema.sql.`;
+  }
+  return msg;
+}
+
+/**
+ * Inscrit ou met à jour un joueur dans room_players.
+ * Si l'avatar Base64/GIF est trop volumineux et échoue, retombe proprement sur l'icône prédéfinie.
+ */
+async function upsertPlayerWithAvatarFallback(params: {
+  roomId: string;
+  userId: string;
+  profile: PlayerProfile;
+  isAlive: boolean;
+}): Promise<void> {
+  const supabase = createClient();
+  const pseudo = params.profile.nickname.trim() || "Veilleur";
+  const primaryAvatar = encodeProfileAvatar(params.profile);
+  const fallbackAvatar = `preset:${params.profile.avatarPreset}`;
+
+  // Limite préventive à ~400 Ko pour éviter de bloquer PostgREST sur mobile
+  const candidateAvatar =
+    primaryAvatar.length > 400_000 ? fallbackAvatar : primaryAvatar;
+
+  const { error } = await withRequestTimeout(
+    supabase.from("room_players").upsert(
+      {
+        room_id: params.roomId,
+        user_id: params.userId,
+        pseudo,
+        avatar_data: candidateAvatar,
+        is_owner: params.profile.isOwner,
+        is_alive: params.isAlive,
+        has_voted: false,
+        target_id: null,
+      },
+      { onConflict: "room_id,user_id" }
+    )
+  );
+
+  if (!error) return;
+
+  // Seconde tentative immédiate sans le gros Base64 si l'avatar a bloqué l'insertion
+  if (candidateAvatar !== fallbackAvatar) {
+    const { error: retryError } = await withRequestTimeout(
+      supabase.from("room_players").upsert(
+        {
+          room_id: params.roomId,
+          user_id: params.userId,
+          pseudo,
+          avatar_data: fallbackAvatar,
+          is_owner: params.profile.isOwner,
+          is_alive: params.isAlive,
+          has_voted: false,
+          target_id: null,
+        },
+        { onConflict: "room_id,user_id" }
+      )
+    );
+    if (!retryError) return;
+    throw new Error(formatSupabaseError(retryError, "Impossible d'inscrire le joueur."));
+  }
+
+  throw new Error(formatSupabaseError(error, "Impossible d'inscrire le joueur."));
+}
+
 /**
  * Crée un nouveau salon dans Supabase avec un code à 4 lettres et inscrit l'hôte.
  */
@@ -70,49 +170,47 @@ export async function createRoomInSupabase(params: {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = attempt === 0 ? desiredCode : generateRoomCode();
-    const { data, error } = await supabase
-      .from("rooms")
-      .insert({
-        code,
-        host_user_id: params.userId,
-        narrator_mode: params.narratorMode,
-        phase: "LOBBY",
-        turn_number: 1,
-        role_composition: params.composition,
-        game_state: createInitialGameState(),
-      })
-      .select()
-      .single();
+    const { data, error } = await withRequestTimeout(
+      supabase
+        .from("rooms")
+        .insert({
+          code,
+          host_user_id: params.userId,
+          narrator_mode: params.narratorMode,
+          phase: "LOBBY",
+          turn_number: 1,
+          role_composition: params.composition,
+          game_state: createInitialGameState(),
+        })
+        .select()
+        .single()
+    );
 
     if (!error && data) {
       createdRoom = normalizeRoom(data as Record<string, unknown>);
       break;
     }
 
-    lastError = new Error(error?.message ?? "Erreur création salon");
+    lastError = new Error(
+      formatSupabaseError(error, "Erreur lors de la création du salon.")
+    );
+
+    // Ne réessayer un nouveau code que si ce code existe déjà (23505)
+    if (error?.code !== "23505") {
+      throw lastError;
+    }
   }
 
   if (!createdRoom) {
     throw lastError ?? new Error("Impossible de créer le salon.");
   }
 
-  const { error: playerError } = await supabase.from("room_players").upsert(
-    {
-      room_id: createdRoom.id,
-      user_id: params.userId,
-      pseudo: params.profile.nickname.trim() || "Veilleur",
-      avatar_data: encodeProfileAvatar(params.profile),
-      is_owner: params.profile.isOwner,
-      is_alive: true,
-      has_voted: false,
-      target_id: null,
-    },
-    { onConflict: "room_id,user_id" }
-  );
-
-  if (playerError) {
-    throw new Error(playerError.message);
-  }
+  await upsertPlayerWithAvatarFallback({
+    roomId: createdRoom.id,
+    userId: params.userId,
+    profile: params.profile,
+    isAlive: true,
+  });
 
   return createdRoom;
 }
@@ -128,59 +226,52 @@ export async function joinRoomInSupabase(params: {
   const supabase = createClient();
   const normalizedCode = params.code.trim().toUpperCase();
 
-  const { data: roomData, error: roomError } = await supabase
-    .from("rooms")
-    .select("*")
-    .eq("code", normalizedCode)
-    .single();
+  const { data: roomData, error: roomError } = await withRequestTimeout(
+    supabase.from("rooms").select("*").eq("code", normalizedCode).single()
+  );
 
   if (roomError || !roomData) {
+    if (roomError && roomError.code !== "PGRST116") {
+      throw new Error(
+        formatSupabaseError(
+          roomError,
+          `Aucun salon trouvé pour le code « ${normalizedCode} ».`
+        )
+      );
+    }
     throw new Error(`Aucun salon trouvé pour le code « ${normalizedCode} ».`);
   }
 
   const room = normalizeRoom(roomData as Record<string, unknown>);
 
-  const { data: existingPlayer } = await supabase
-    .from("room_players")
-    .select("*")
-    .eq("room_id", room.id)
-    .eq("user_id", params.userId)
-    .maybeSingle();
-
-  if (existingPlayer) {
-    await supabase
+  const { data: existingPlayer } = await withRequestTimeout(
+    supabase
       .from("room_players")
-      .update({
-        pseudo: params.profile.nickname.trim() || "Veilleur",
-        avatar_data: encodeProfileAvatar(params.profile),
-        is_owner: params.profile.isOwner,
-      })
-      .eq("id", existingPlayer.id);
-  } else {
-    const { error: insertError } = await supabase.from("room_players").insert({
-      room_id: room.id,
-      user_id: params.userId,
-      pseudo: params.profile.nickname.trim() || "Veilleur",
-      avatar_data: encodeProfileAvatar(params.profile),
-      is_owner: params.profile.isOwner,
-      is_alive: room.phase === "LOBBY",
-      has_voted: false,
-      target_id: null,
-    });
+      .select("id, is_alive")
+      .eq("room_id", room.id)
+      .eq("user_id", params.userId)
+      .maybeSingle()
+  );
 
-    if (insertError) {
-      throw new Error(insertError.message);
-    }
-  }
+  await upsertPlayerWithAvatarFallback({
+    roomId: room.id,
+    userId: params.userId,
+    profile: params.profile,
+    isAlive: existingPlayer ? Boolean(existingPlayer.is_alive) : room.phase === "LOBBY",
+  });
 
-  const { data: playersData, error: playersError } = await supabase
-    .from("room_players")
-    .select("*")
-    .eq("room_id", room.id)
-    .order("joined_at", { ascending: true });
+  const { data: playersData, error: playersError } = await withRequestTimeout(
+    supabase
+      .from("room_players")
+      .select("*")
+      .eq("room_id", room.id)
+      .order("joined_at", { ascending: true })
+  );
 
   if (playersError) {
-    throw new Error(playersError.message);
+    throw new Error(
+      formatSupabaseError(playersError, "Erreur lors du chargement des joueurs.")
+    );
   }
 
   return {

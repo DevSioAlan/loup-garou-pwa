@@ -63,7 +63,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="fr"
       className={`${cinzel.variable} ${jakarta.variable} h-full antialiased`}
     >
-      <body className="font-sans min-h-dvh w-full overflow-x-hidden bg-[#090A0F] text-[#F4F1EA] selection:bg-rose-500/30 selection:text-amber-100">
+      <body className="font-sans min-h-dvh w-full overflow-x-clip bg-[#090A0F] text-[#F4F1EA] selection:bg-rose-500/30 selection:text-amber-100">
         <PwaRegister />
         {children}
       </body>
