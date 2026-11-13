@@ -17,6 +17,23 @@ export function getSupabaseClientEnv(): {
 }
 
 /**
+ * Retourne un préfixe discret du projet Supabase actif (ex: "nmjkap...")
+ * pour diagnostiquer immédiatement vers quel backend pointe le build courant.
+ */
+export function getSupabaseProjectRefPrefix(): string {
+  const { url } = getSupabaseClientEnv();
+  if (!url) return "absent";
+
+  try {
+    const hostname = new URL(url).hostname;
+    const ref = hostname.split(".")[0] || hostname;
+    return ref.length > 6 ? `${ref.slice(0, 6)}...` : ref;
+  } catch {
+    return `${url.slice(0, 14)}...`;
+  }
+}
+
+/**
  * Vérifie si les variables d'environnement Supabase sont configurées.
  */
 export function isSupabaseConfigured(): boolean {
@@ -36,5 +53,7 @@ export function createClient() {
     );
   }
 
-  return createBrowserClient(url, anonKey);
+  return createBrowserClient(url, anonKey, {
+    db: { schema: "public" },
+  });
 }

@@ -1,4 +1,7 @@
-import { createClient } from "@/lib/supabase/client";
+import {
+  createClient,
+  getSupabaseProjectRefPrefix,
+} from "@/lib/supabase/client";
 import {
   buildPhaseDeadline,
   createInitialGameState,
@@ -77,15 +80,16 @@ function formatSupabaseError(
   error: { code?: string; message?: string; details?: string } | null | undefined,
   fallback: string
 ): string {
-  if (!error) return fallback;
+  const projectSuffix = ` [Projet: ${getSupabaseProjectRefPrefix()}]`;
+  if (!error) return `${fallback}${projectSuffix}`;
   const msg = error.message || fallback;
   if (error.code === "42P01" || msg.includes("schema cache")) {
-    return `${msg} — Exécutez supabase/schema.sql dans Supabase SQL Editor.`;
+    return `${msg} — Exécutez supabase/schema.sql dans Supabase SQL Editor.${projectSuffix}`;
   }
   if (error.code === "42501" || msg.toLowerCase().includes("row-level security")) {
-    return `Accès refusé (RLS) : ${msg}. Vérifiez les politiques dans supabase/schema.sql.`;
+    return `Accès refusé (RLS) : ${msg}. Vérifiez les politiques dans supabase/schema.sql.${projectSuffix}`;
   }
-  return msg;
+  return `${msg}${projectSuffix}`;
 }
 
 /**

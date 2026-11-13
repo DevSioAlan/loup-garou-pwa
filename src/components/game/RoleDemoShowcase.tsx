@@ -223,7 +223,6 @@ export function RoleDemoShowcase() {
           ? err.message
           : "Impossible de créer le salon sur Supabase.";
       setRoomCreateError(message);
-      setPhaseInfo(`Erreur Supabase : ${message}`);
     } finally {
       setCreatingRoom(false);
     }
@@ -372,7 +371,10 @@ export function RoleDemoShowcase() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setDraftRoomCode(generateRoomCode())}
+                      onClick={() => {
+                        setDraftRoomCode(generateRoomCode());
+                        setRoomCreateError(null);
+                      }}
                       className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-medium text-slate-200 hover:border-amber-300/40"
                     >
                       Autre code
@@ -382,7 +384,10 @@ export function RoleDemoShowcase() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setNarratorMode("auto")}
+                      onClick={() => {
+                        setNarratorMode("auto");
+                        setRoomCreateError(null);
+                      }}
                       className={`flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border text-xs font-semibold ${
                         narratorMode === "auto"
                           ? "border-amber-300/60 bg-amber-400/15 text-amber-100"
@@ -395,7 +400,10 @@ export function RoleDemoShowcase() {
 
                     <button
                       type="button"
-                      onClick={() => setNarratorMode("human")}
+                      onClick={() => {
+                        setNarratorMode("human");
+                        setRoomCreateError(null);
+                      }}
                       className={`flex min-h-[40px] items-center justify-center gap-1.5 rounded-xl border text-xs font-semibold ${
                         narratorMode === "human"
                           ? "border-purple-400/60 bg-purple-500/15 text-purple-100"
