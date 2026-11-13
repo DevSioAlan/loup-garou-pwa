@@ -53,7 +53,7 @@ export function SplashScreen({ visible, onDismiss }: SplashScreenProps) {
             <button
               type="button"
               onClick={onDismiss}
-              className="rounded-full border border-white/15 bg-white/[0.06] px-3.5 py-1.5 text-xs font-medium tracking-wide text-slate-300 backdrop-blur-md transition-colors hover:border-amber-300/40 hover:text-amber-100 active:scale-95"
+              className="glass-pill rounded-full px-3.5 py-1.5 text-xs font-medium tracking-wide text-slate-200 transition-colors hover:border-amber-300/40 hover:text-amber-100 active:scale-95"
             >
               Passer
             </button>

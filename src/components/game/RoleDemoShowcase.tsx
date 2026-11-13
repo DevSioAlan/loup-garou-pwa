@@ -345,7 +345,7 @@ export function RoleDemoShowcase() {
                 onSelectRole={setSelectedRoleId}
               />
 
-              <RoleCard role={selectedRole} />
+              <RoleCard role={selectedRole} ambientWhenSelected />
             </motion.section>
           ) : (
             <motion.section

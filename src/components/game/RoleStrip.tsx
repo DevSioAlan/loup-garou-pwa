@@ -118,7 +118,7 @@ export function RoleStrip({
         aria-label="Défiler les rôles vers la gauche"
         disabled={!canScrollLeft}
         onClick={() => scrollByAmount(-1)}
-        className={`flex h-8 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/45 text-amber-200/90 backdrop-blur-md transition-opacity ${
+        className={`glass-pill flex h-8 w-7 shrink-0 items-center justify-center rounded-full text-amber-200/90 transition-opacity ${
           canScrollLeft
             ? "opacity-90 hover:border-amber-300/40 hover:text-amber-100"
             : "pointer-events-none opacity-20"
@@ -147,16 +147,16 @@ export function RoleStrip({
                 if (dragStateRef.current.moved) return;
                 onSelectRole(role.id);
               }}
-              className={`inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all select-none ${
+              className={`glass-pill inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all select-none ${
                 active
                   ? "bg-white/14 text-amber-50"
-                  : "border-white/10 bg-white/[0.04] text-slate-300/85 hover:border-white/25"
+                  : "text-slate-300/85 hover:border-white/25"
               }`}
               style={
                 active
                   ? {
                       borderColor: `${role.aura.primary}99`,
-                      boxShadow: `0 0 16px ${role.aura.primary}45`,
+                      boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 18px ${role.aura.primary}45`,
                     }
                   : undefined
               }
@@ -180,7 +180,7 @@ export function RoleStrip({
         aria-label="Défiler les rôles vers la droite"
         disabled={!canScrollRight}
         onClick={() => scrollByAmount(1)}
-        className={`flex h-8 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/45 text-amber-200/90 backdrop-blur-md transition-opacity ${
+        className={`glass-pill flex h-8 w-7 shrink-0 items-center justify-center rounded-full text-amber-200/90 transition-opacity ${
           canScrollRight
             ? "opacity-90 hover:border-amber-300/40 hover:text-amber-100"
             : "pointer-events-none opacity-20"
