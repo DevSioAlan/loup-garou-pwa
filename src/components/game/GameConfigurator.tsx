@@ -30,9 +30,9 @@ interface GameConfiguratorProps {
 
 /**
  * Configurateur de partie intelligent :
- * - Choix du nombre de joueurs (4 à 20) via slider ou boutons +/-
+ * - Choix du nombre de joueurs (4 à 30) via slider ou boutons +/-
  * - Auto-équilibrage intelligent & bouton "Varier la composition"
- * - Ajustement manuel rôle par rôle (+ / -) pour les 14 rôles du catalogue
+ * - Ajustement manuel rôle par rôle (+ / -) pour tous les rôles du catalogue
  */
 export function GameConfigurator({
   playerCount,
@@ -87,7 +87,7 @@ export function GameConfigurator({
             <input
               type="range"
               min={4}
-              max={20}
+              max={30}
               value={playerCount}
               aria-label="Sélecteur de nombre de joueurs"
               onChange={(e) => onChangePlayerCount(Number(e.target.value))}
@@ -95,15 +95,15 @@ export function GameConfigurator({
             />
             <div className="mt-1 flex justify-between text-[10px] text-slate-400">
               <span>4 min</span>
-              <span>12</span>
-              <span>20 max</span>
+              <span>17</span>
+              <span>30 max</span>
             </div>
           </div>
 
           <button
             type="button"
             aria-label="Ajouter un joueur"
-            disabled={playerCount >= 20}
+            disabled={playerCount >= 30}
             onClick={() => onChangePlayerCount(playerCount + 1)}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] text-white transition-transform active:scale-95 disabled:opacity-35"
           >

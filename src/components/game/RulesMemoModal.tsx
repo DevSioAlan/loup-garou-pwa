@@ -11,8 +11,8 @@ interface RulesMemoModalProps {
 const NIGHT_CALL_ORDER = [
   {
     step: "1",
-    role: "Cupidon, Enfant Sauvage & Fratries",
-    note: "Nuit 1 : Cupidon lie 2 amoureux, l'Enfant Sauvage choisit son modèle, Deux Sœurs et Trois Frères se reconnaissent.",
+    role: "Voleur, Cupidon, Enfant Sauvage & Fratries",
+    note: "Nuit 1 : le Voleur choisit parmi 2 cartes écartées, Cupidon lie 2 amoureux, l'Enfant Sauvage choisit son modèle, Deux Sœurs et Trois Frères se reconnaissent.",
   },
   {
     step: "2",
@@ -21,23 +21,23 @@ const NIGHT_CALL_ORDER = [
   },
   {
     step: "3",
-    role: "Voyante & Renard",
-    note: "La Voyante découvre un rôle ; le Renard flaire un groupe de 3 joueurs pour détecter la présence d'un Loup.",
+    role: "Voyante, Renard & Comédien",
+    note: "La Voyante sonde un joueur ; le Renard flaire 3 voisins ; le Comédien active un de ses 3 masques de rôle en réserve.",
   },
   {
     step: "4",
-    role: "Loups-Garous, Loup Blanc, GML & Infect Père",
-    note: "La meute choisit une victime ; l'Infect Père peut l'infecter (1 fois), le GML frapper une 2e cible ou le Loup Blanc traquer un frère.",
+    role: "Loups, Loup Noir, Loup Blanc, GML & Infect Père",
+    note: "La meute choisit une victime ; le Loup Noir (Mystique) révèle un rôle, l'Infect Père convertit (1×), le GML frappe une 2e proie ou le Loup Blanc traque un loup.",
   },
   {
     step: "5",
-    role: "Sorcière, Corbeau & Joueur de Flûte",
-    note: "La Sorcière dose ses fioles, le Corbeau pose +2 voix sur un suspect, le Joueur de Flûte charme 2 âmes.",
+    role: "Sorcière, Corbeau, Pyromane & Joueur de Flûte",
+    note: "La Sorcière dose ses fioles, le Corbeau ajoute +2 voix, le Pyromane huile 2 cibles ou embrase ses marqués, la Flûte charme 2 âmes.",
   },
   {
     step: "6",
-    role: "Aube (Ours & Chevalier), Débat & Vote",
-    note: "Annonce des victimes, grognement de l'Ours, Servante Dévouée, tir du Chasseur et vote du village.",
+    role: "Aube, Juge Bègue, Débat & Vote",
+    note: "Victimes, grognement de l'Ours, Servante Dévouée, tir du Chasseur et vote du village (avec double verdict possible du Juge Bègue).",
   },
 ];
 
@@ -46,19 +46,19 @@ const VICTORY_CONDITIONS = [
     camp: "Village",
     colorClass: "border-sky-400/35 bg-sky-500/10 text-sky-200",
     icon: Shield,
-    rule: "Éliminer tous les Loups-Garous (y compris l'Infect Père, les infectés et le Loup Blanc).",
+    rule: "Éliminer tous les Loups-Garous (y compris Loup Noir, Infect Père, infectés, Loup Blanc) et le Pyromane.",
   },
   {
     camp: "Loups-Garous",
     colorClass: "border-rose-400/35 bg-rose-500/10 text-rose-200",
     icon: Skull,
-    rule: "Dévorer ou infecter le village jusqu'à être au moins autant de loups que d'innocents.",
+    rule: "Dévorer ou infecter le village jusqu'à égaler ou surpasser les survivants (hors Pyromane encore en lice).",
   },
   {
     camp: "Solitaires",
     colorClass: "border-amber-400/35 bg-amber-500/10 text-amber-200",
     icon: Trophy,
-    rule: "Joueur de Flûte : charmer tous les survivants. Loup Blanc : dernier survivant. Ange : éliminé au 1er tour. Amoureux mixtes : survivre à deux.",
+    rule: "Pyromane ou Loup Blanc : dernier survivant. Joueur de Flûte : charmer tous les vivants. Ange : éliminé au 1er vote. Amoureux mixtes : survivre à deux.",
   },
 ];
 

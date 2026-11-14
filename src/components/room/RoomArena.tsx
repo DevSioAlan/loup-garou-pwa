@@ -5,15 +5,19 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Biohazard,
   BookOpen,
+  Bot,
   Check,
   ChevronDown,
   Clock,
   Crosshair,
   Crown,
   Dog,
+  Drama,
   Eye,
   Feather,
+  FlameKindling,
   FlaskConical,
+  Gavel,
   Heart,
   Mic,
   Moon,
@@ -29,9 +33,11 @@ import {
   Sun,
   Trophy,
   Users,
+  VenetianMask,
   Volume2,
   VolumeX,
   Vote,
+  Wand2,
 } from "lucide-react";
 import { GAME_ROLES, ROLE_BY_ID } from "@/data/roles";
 import { playCountdownTickSound } from "@/lib/audioNarrator";
@@ -42,21 +48,28 @@ import {
   decodeAvatarToProfile,
   getHumanNarratorScript,
   getPhaseLabel,
+  isBotPlayer,
   isEffectiveWolf,
   markPlayerReady,
   resetRoomToLobby,
+  submitComedianMaskAction,
   submitCorbeauTarget,
   submitCupidonLovers,
   submitGrandMechantTarget,
   submitHunterShotTarget,
+  submitJugeBegueArm,
   submitLoupBlancTarget,
+  submitLoupMystiqueInspection,
   submitMayorSuccessor,
   submitPiperTargets,
   submitPlayerReaction,
+  submitPyromaneIgnite,
+  submitPyromaneOil,
   submitRenardTargets,
   submitSalvateurTarget,
   submitSeerInspection,
   submitServanteClaim,
+  submitVoleurChoice,
   submitVoteTarget,
   submitWildChildModel,
   submitWitchDecision,
@@ -227,6 +240,10 @@ export function RoomArena({
   const [showEventLog, setShowEventLog] = useState(false);
   const [cupidSelection, setCupidSelection] = useState<string[]>([]);
   const [piperSelection, setPiperSelection] = useState<string[]>([]);
+  const [pyroSelection, setPyroSelection] = useState<string[]>([]);
+  const [comedianSelectedMask, setComedianSelectedMask] = useState<
+    string | null
+  >(null);
   const [witchSave, setWitchSave] = useState(false);
   const [witchKillId, setWitchKillId] = useState<string | null>(null);
   const [witchSubmitted, setWitchSubmitted] = useState(false);
@@ -345,6 +362,21 @@ export function RoomArena({
     });
   };
 
+  const handlePyroToggle = (targetId: string) => {
+    if (
+      targetId === currentPlayer?.id ||
+      state.oiledPlayerIds.includes(targetId) ||
+      !players.some((p) => p.id === targetId && p.is_alive)
+    ) {
+      return;
+    }
+    setPyroSelection((prev) => {
+      if (prev.includes(targetId)) return prev.filter((id) => id !== targetId);
+      if (prev.length >= 2) return [prev[1], targetId];
+      return [...prev, targetId];
+    });
+  };
+
   const handleReaction = async (reaction: PlayerReactionType) => {
     if (!currentPlayer || !isAlive || reactionBusy) return;
     setReactionBusy(true);
@@ -370,6 +402,23 @@ export function RoomArena({
     ? players.find((p) => p.id === state.seerInspectedId)
     : null;
   const seerTargetRole = seerTarget?.role ? ROLE_BY_ID[seerTarget.role] : null;
+
+  // Rôle inspecté par le Loup-Garou Noir (Mystique) ou le masque Voyante du Comédien
+  const mystiqueTarget = state.mystiqueInspectedId
+    ? players.find((p) => p.id === state.mystiqueInspectedId)
+    : null;
+  const mystiqueTargetRole = mystiqueTarget?.role
+    ? ROLE_BY_ID[mystiqueTarget.role]
+    : null;
+  const comedianPeekTarget = state.comedianPeekedPlayerId
+    ? players.find((p) => p.id === state.comedianPeekedPlayerId)
+    : null;
+  const comedianPeekRole = comedianPeekTarget?.role
+    ? ROLE_BY_ID[comedianPeekTarget.role]
+    : null;
+  const oiledAlivePlayers = alivePlayers.filter((p) =>
+    state.oiledPlayerIds.includes(p.id)
+  );
 
   // Victime menacée vue par la Sorcière (masquée si déjà protégée par le Salvateur)
   const wolfVictim =
@@ -776,6 +825,91 @@ export function RoomArena({
       )}
 
       {/* ==================== 2. SOUS-ÉTAPES DE NUIT ==================== */}
+      {isNightPhase && activeStep === "voleur" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "voleur" ? (
+            <>
+              <div className="flex items-center gap-2 text-teal-200">
+                <VenetianMask className="h-4 w-4 text-teal-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Choix du Voleur (Nuit 1)
+                </h3>
+              </div>
+              {state.thiefResolved ? (
+                <p className="text-xs text-emerald-200">
+                  Votre destin pour cette partie est scellé.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  <p className="text-xs text-slate-300">
+                    Deux cartes secrètes vous attendent sur la table. Choisissez
+                    d&apos;endosser l&apos;une d&apos;elles ou conservez votre rôle :
+                  </p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(state.thiefOptions ?? []).map((optRoleId) => {
+                      const optRole = ROLE_BY_ID[optRoleId];
+                      if (!optRole) return null;
+                      return (
+                        <button
+                          key={optRoleId}
+                          type="button"
+                          disabled={actionBusy}
+                          onClick={() =>
+                            runAction(() =>
+                              submitVoleurChoice(
+                                room,
+                                players,
+                                currentPlayer.id,
+                                optRoleId
+                              )
+                            )
+                          }
+                          className="glass-subcard flex flex-col items-start gap-1 rounded-2xl border p-3 text-left transition hover:border-teal-300/60"
+                          style={{
+                            borderColor: `${optRole.aura.primary}55`,
+                          }}
+                        >
+                          <div className="flex w-full items-center justify-between gap-2">
+                            <span
+                              className="font-display text-sm font-bold"
+                              style={{ color: optRole.aura.primary }}
+                            >
+                              {optRole.name}
+                            </span>
+                            <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                              {optRole.factionLabel}
+                            </span>
+                          </div>
+                          <p className="text-[11px] leading-snug text-slate-300">
+                            {optRole.ability}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() =>
+                        submitVoleurChoice(room, players, currentPlayer.id, null)
+                      )
+                    }
+                    className="flex min-h-[40px] w-full items-center justify-center rounded-2xl border border-white/15 bg-black/40 text-xs font-semibold text-slate-200 hover:bg-white/5"
+                  >
+                    Conserver mon rôle (Voleur)
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Voleur examine silencieusement deux cartes secrètes dans la pénombre...
+            </p>
+          )}
+        </section>
+      )}
+
       {isNightPhase && activeStep === "cupidon" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && currentPlayer?.role === "cupidon" ? (
@@ -1065,6 +1199,143 @@ export function RoomArena({
         </section>
       )}
 
+      {isNightPhase && activeStep === "comedien" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "comedien" ? (
+            <>
+              <div className="flex items-center gap-2 text-purple-200">
+                <Drama className="h-4 w-4 text-purple-300" />
+                <h3 className="font-display text-sm font-bold">
+                  Loge du Comédien ({state.comedianMasks.length - state.comedianUsedMasks.length} masques neufs)
+                </h3>
+              </div>
+
+              {state.comedianActedTonight ? (
+                <div className="space-y-2">
+                  {comedianPeekTarget && comedianPeekRole ? (
+                    <div
+                      className="rounded-2xl border p-3 text-center"
+                      style={{
+                        borderColor: `${comedianPeekRole.aura.primary}80`,
+                        backgroundColor: "rgba(10, 10, 18, 0.78)",
+                      }}
+                    >
+                      <p className="text-xs text-slate-300">
+                        Masque Voyante — Rôle de <strong>{comedianPeekTarget.pseudo}</strong> :
+                      </p>
+                      <p
+                        className="font-display mt-1 text-base font-bold"
+                        style={{ color: comedianPeekRole.aura.primary }}
+                      >
+                        {comedianPeekRole.name} ({comedianPeekRole.factionLabel})
+                      </p>
+                    </div>
+                  ) : state.foxLastResult ? (
+                    <div className="rounded-2xl border border-orange-400/45 bg-orange-950/35 p-3 text-center text-xs text-orange-100">
+                      Masque Renard ({state.foxLastResult.names.join(", ")}) :{" "}
+                      <strong>
+                        {state.foxLastResult.hasWolf
+                          ? "Loup détecté !"
+                          : "Aucun loup dans ce trio."}
+                      </strong>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-purple-200">
+                      Votre rôle d&apos;emprunt a été joué avec brio cette nuit.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {state.comedianMasks.map((maskId) => {
+                      const maskRole = ROLE_BY_ID[maskId];
+                      const used = state.comedianUsedMasks.includes(maskId);
+                      const selected = comedianSelectedMask === maskId;
+                      if (!maskRole) return null;
+                      return (
+                        <button
+                          key={maskId}
+                          type="button"
+                          disabled={used || actionBusy}
+                          onClick={() => setComedianSelectedMask(maskId)}
+                          className={`rounded-2xl border px-2 py-2 text-center text-[11px] font-bold transition ${
+                            used
+                              ? "border-white/5 bg-black/25 text-slate-500 line-through opacity-45"
+                              : selected
+                                ? "border-purple-400 bg-purple-500/25 text-purple-100 shadow-[0_0_16px_rgba(192,132,252,0.3)]"
+                                : "border-white/15 bg-black/40 text-slate-200 hover:border-purple-300/45"
+                          }`}
+                        >
+                          {maskRole.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {comedianSelectedMask && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-purple-200">
+                        Cible du masque{" "}
+                        <strong>
+                          {ROLE_BY_ID[comedianSelectedMask]?.name ?? comedianSelectedMask}
+                        </strong>{" "}
+                        :
+                      </p>
+                      <TargetSelectionGrid
+                        players={players}
+                        currentPlayerId={currentPlayer.id}
+                        allowSelf={comedianSelectedMask === "salvateur"}
+                        busy={actionBusy}
+                        accentClass="border-purple-400 bg-purple-500/25 text-purple-100"
+                        extraDisabledTag={(p) =>
+                          comedianSelectedMask === "salvateur" &&
+                          p.id === state.salvateurLastTargetId
+                            ? "Nuit préc."
+                            : null
+                        }
+                        onSelect={(targetId) =>
+                          runAction(() =>
+                            submitComedianMaskAction(
+                              room,
+                              players,
+                              currentPlayer.id,
+                              {
+                                maskId: comedianSelectedMask,
+                                targetPlayerId: targetId,
+                              }
+                            )
+                          )
+                        }
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() =>
+                        submitComedianMaskAction(room, players, currentPlayer.id, {
+                          maskId: null,
+                        })
+                      )
+                    }
+                    className="flex min-h-[40px] w-full items-center justify-center rounded-2xl border border-white/15 bg-black/40 text-xs font-semibold text-slate-200"
+                  >
+                    Garder mes masques cette nuit
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Le Comédien répète dans l&apos;ombre devant ses trois masques...
+            </p>
+          )}
+        </section>
+      )}
+
       {isNightPhase && activeStep === "loups" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && isMyEffectiveWolf && currentPlayer ? (
@@ -1146,6 +1417,68 @@ export function RoomArena({
           ) : (
             <p className="text-center text-xs text-slate-300">
               Les Loups-Garous rôdent dans le silence de la nuit...
+            </p>
+          )}
+        </section>
+      )}
+
+      {isNightPhase && activeStep === "loup-mystique" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "loup-mystique" ? (
+            <>
+              <div className="flex items-center gap-2 text-fuchsia-200">
+                <Wand2 className="h-4 w-4 text-fuchsia-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Vision du Loup-Garou Noir (Mystique)
+                </h3>
+              </div>
+
+              {mystiqueTarget && mystiqueTargetRole ? (
+                <div
+                  className="rounded-2xl border p-3.5 text-center"
+                  style={{
+                    borderColor: `${mystiqueTargetRole.aura.primary}80`,
+                    backgroundColor: "rgba(18, 10, 24, 0.78)",
+                    boxShadow: `0 0 24px ${mystiqueTargetRole.aura.primary}30`,
+                  }}
+                >
+                  <p className="text-xs text-slate-300">
+                    Pouvoir secret de <strong>{mystiqueTarget.pseudo}</strong> :
+                  </p>
+                  <p
+                    className="font-display mt-1 text-lg font-bold"
+                    style={{ color: mystiqueTargetRole.aura.primary }}
+                  >
+                    {mystiqueTargetRole.name} ({mystiqueTargetRole.factionLabel})
+                  </p>
+                </div>
+              ) : (
+                <TargetSelectionGrid
+                  players={players}
+                  currentPlayerId={currentPlayer.id}
+                  allowSelf={false}
+                  busy={actionBusy}
+                  actionLabel={(p) => `Sonder ${p.pseudo}`}
+                  extraDisabledTag={(p) =>
+                    isEffectiveWolf(p, state) ? "Meute" : null
+                  }
+                  accentClass="border-fuchsia-400 bg-fuchsia-500/20 text-fuchsia-100"
+                  onSelect={(id) =>
+                    runAction(() =>
+                      submitLoupMystiqueInspection(
+                        room,
+                        id,
+                        players,
+                        currentPlayer.id
+                      )
+                    )
+                  }
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Un regard pourpre traverse les ténèbres pour sonder un habitant...
             </p>
           )}
         </section>
@@ -1411,6 +1744,91 @@ export function RoomArena({
         </section>
       )}
 
+      {isNightPhase && activeStep === "pyromane" && (
+        <section className="glass-panel rounded-3xl p-4 space-y-3">
+          {isAlive && currentPlayer?.role === "pyromane" ? (
+            <>
+              <div className="flex items-center gap-2 text-orange-200">
+                <FlameKindling className="h-4 w-4 text-orange-400" />
+                <h3 className="font-display text-sm font-bold">
+                  Flamme du Pyromane ({oiledAlivePlayers.length} cible(s) huilée(s))
+                </h3>
+              </div>
+
+              {state.pyromaneActedTonight ? (
+                <p className="text-xs text-orange-200">
+                  {state.pyromaneIgnitedTonight
+                    ? "L'étincelle est jetée : l'embrasement frappera à l'aube !"
+                    : "Vos cibles silencieuses viennent d'être aspergées d'huile."}
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {oiledAlivePlayers.length > 0 && (
+                    <div className="rounded-2xl border border-orange-400/35 bg-orange-950/35 p-2.5 text-xs text-orange-100">
+                      Cibles marquées d&apos;huile :{" "}
+                      <strong>
+                        {oiledAlivePlayers.map((p) => p.pseudo).join(", ")}
+                      </strong>
+                    </div>
+                  )}
+
+                  <TargetSelectionGrid
+                    players={players}
+                    currentPlayerId={currentPlayer.id}
+                    allowSelf={false}
+                    selectedIds={pyroSelection}
+                    busy={actionBusy}
+                    accentClass="border-orange-400 bg-orange-500/25 text-orange-100"
+                    extraDisabledTag={(p) =>
+                      state.oiledPlayerIds.includes(p.id) ? "Huilé" : null
+                    }
+                    onSelect={handlePyroToggle}
+                  />
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={pyroSelection.length === 0 || actionBusy}
+                      onClick={() =>
+                        runAction(() =>
+                          submitPyromaneOil(
+                            room,
+                            players,
+                            currentPlayer.id,
+                            pyroSelection
+                          )
+                        )
+                      }
+                      className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-2xl border border-orange-400/45 bg-orange-500/20 px-3 text-xs font-bold text-orange-100 disabled:opacity-40"
+                    >
+                      <FlameKindling className="h-4 w-4" />
+                      <span>Asperger d&apos;huile ({pyroSelection.length}/2)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={oiledAlivePlayers.length === 0 || actionBusy}
+                      onClick={() =>
+                        runAction(() =>
+                          submitPyromaneIgnite(room, players, currentPlayer.id)
+                        )
+                      }
+                      className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-600 to-rose-700 px-3 text-xs font-bold text-white shadow-[0_6px_18px_rgba(234,88,12,0.45)] disabled:opacity-35"
+                    >
+                      <span>Embraser ({oiledAlivePlayers.length})</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-center text-xs text-slate-300">
+              Une odeur d&apos;huile et de braises plane silencieusement sur les ruelles...
+            </p>
+          )}
+        </section>
+      )}
+
       {isNightPhase && activeStep === "joueur-de-flute" && (
         <section className="glass-panel rounded-3xl p-4 space-y-3">
           {isAlive && currentPlayer?.role === "joueur-de-flute" ? (
@@ -1553,22 +1971,46 @@ export function RoomArena({
               Épargné par le village, l&apos;Idiot du Village ne peut plus voter.
             </p>
           ) : (
-            <TargetSelectionGrid
-              players={players}
-              currentPlayerId={currentPlayer?.id}
-              allowSelf={false}
-              selectedIds={
-                currentPlayer?.target_id ? [currentPlayer.target_id] : []
-              }
-              voteCounts={voteCounts}
-              corbeauTargetId={isMayorElection ? null : state.corbeauTargetId}
-              busy={actionBusy}
-              onSelect={(id) =>
-                currentPlayer
-                  ? runAction(() => submitVoteTarget(currentPlayer.id, id))
-                  : undefined
-              }
-            />
+            <>
+              {!isMayorElection &&
+                currentPlayer?.role === "juge-begue" &&
+                (state.stutteringJudgeArmed ? (
+                  <div className="rounded-2xl border border-amber-400/55 bg-amber-500/15 px-3 py-2 text-center text-xs font-semibold text-amber-100">
+                    Marteau du Juge armé : un second vote s&apos;ouvrira aussitôt après celui-ci !
+                  </div>
+                ) : !state.stutteringJudgeUsed ? (
+                  <button
+                    type="button"
+                    disabled={actionBusy}
+                    onClick={() =>
+                      runAction(() =>
+                        submitJugeBegueArm(room, players, currentPlayer.id)
+                      )
+                    }
+                    className="flex min-h-[42px] w-full items-center justify-center gap-2 rounded-2xl border border-amber-400/50 bg-gradient-to-r from-amber-600/25 to-orange-600/25 px-3 text-xs font-bold text-amber-100 transition hover:brightness-110"
+                  >
+                    <Gavel className="h-4 w-4 text-amber-300" />
+                    <span>Coup de Marteau (1×) — Déclencher un 2e vote ce jour</span>
+                  </button>
+                ) : null)}
+
+              <TargetSelectionGrid
+                players={players}
+                currentPlayerId={currentPlayer?.id}
+                allowSelf={false}
+                selectedIds={
+                  currentPlayer?.target_id ? [currentPlayer.target_id] : []
+                }
+                voteCounts={voteCounts}
+                corbeauTargetId={isMayorElection ? null : state.corbeauTargetId}
+                busy={actionBusy}
+                onSelect={(id) =>
+                  currentPlayer
+                    ? runAction(() => submitVoteTarget(currentPlayer.id, id))
+                    : undefined
+                }
+              />
+            </>
           )}
         </section>
       )}
@@ -1806,6 +2248,13 @@ export function RoomArena({
                         {p.pseudo}
                         {p.id === currentPlayer?.id ? " (Moi)" : ""}
                       </p>
+
+                      {isBotPlayer(p) && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full border border-purple-400/35 bg-purple-500/15 px-1.5 py-0.5 text-[9px] font-bold text-purple-200">
+                          <Bot className="h-2.5 w-2.5" />
+                          IA
+                        </span>
+                      )}
 
                       {state.mayorPlayerId === p.id && p.is_alive && (
                         <span className="inline-flex items-center gap-0.5 rounded-full border border-amber-400/45 bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-200">

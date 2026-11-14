@@ -27,8 +27,10 @@ import {
   advanceRoomPhase,
   fetchRoomSnapshot,
   getAutoNarratorSpeech,
+  isBotPlayer,
   isEffectiveWolf,
   joinRoomInSupabase,
+  performBotActionsForPhase,
   updateRoomLobbySettings,
 } from "@/lib/roomService";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -230,7 +232,7 @@ function RoomContent({ params }: RoomPageProps) {
       return;
     }
 
-    const stepKey = `${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.turn_number}`;
+    const stepKey = `${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.game_state.stutteringJudgeUsed ? 1 : 0}-${room.turn_number}`;
     if (lastSpokenKeyRef.current === stepKey) return;
     lastSpokenKeyRef.current = stepKey;
 
@@ -293,6 +295,20 @@ function RoomContent({ params }: RoomPageProps) {
     const checkAutoAdvance = async () => {
       if (autoAdvancingRef.current) return;
 
+      // Si des joueurs IA (Bots) sont présents dans le salon, ils jouent automatiquement cette phase
+      if (players.some((p) => isBotPlayer(p))) {
+        autoAdvancingRef.current = true;
+        try {
+          const botsActed = await performBotActionsForPhase(room, players);
+          if (botsActed) {
+            await refreshSnapshot();
+            return;
+          }
+        } finally {
+          autoAdvancingRef.current = false;
+        }
+      }
+
       const gs = room.game_state;
       const step = gs.nightStep;
       const deadlinePassed =
@@ -305,7 +321,12 @@ function RoomContent({ params }: RoomPageProps) {
           actionComplete = true;
         }
       } else if (room.phase.startsWith("NIGHT_")) {
-        if (step === "cupidon" || (!step && room.phase === "NIGHT_CUPIDON")) {
+        if (step === "voleur") {
+          actionComplete = Boolean(gs.thiefResolved);
+        } else if (
+          step === "cupidon" ||
+          (!step && room.phase === "NIGHT_CUPIDON")
+        ) {
           actionComplete = gs.cupidonTargets.length === 2;
         } else if (step === "enfant-sauvage") {
           actionComplete = Boolean(gs.wildChildModelId);
@@ -322,6 +343,8 @@ function RoomContent({ params }: RoomPageProps) {
           actionComplete = Boolean(gs.seerInspectedId);
         } else if (step === "renard") {
           actionComplete = Boolean(gs.foxCheckedTonight);
+        } else if (step === "comedien") {
+          actionComplete = Boolean(gs.comedianActedTonight);
         } else if (
           step === "loups" ||
           (!step && room.phase === "NIGHT_WEREWOLVES")
@@ -331,6 +354,8 @@ function RoomContent({ params }: RoomPageProps) {
           );
           actionComplete =
             aliveWolves.length > 0 && aliveWolves.every((w) => w.has_voted);
+        } else if (step === "loup-mystique") {
+          actionComplete = Boolean(gs.mystiqueInspectedId);
         } else if (step === "loup-blanc") {
           const whiteWolf = players.find(
             (p) => p.is_alive && p.role === "loup-garou-blanc"
@@ -358,6 +383,8 @@ function RoomContent({ params }: RoomPageProps) {
           );
         } else if (step === "corbeau") {
           actionComplete = Boolean(gs.corbeauTargetId);
+        } else if (step === "pyromane") {
+          actionComplete = Boolean(gs.pyromaneActedTonight);
         } else if (step === "joueur-de-flute") {
           actionComplete = gs.piperTargetsTonight.length > 0;
         }
@@ -369,6 +396,10 @@ function RoomContent({ params }: RoomPageProps) {
                 (p) => p.is_alive && !gs.idiotSparedPlayerIds.includes(p.id)
               );
         if (eligible.length > 0 && eligible.every((p) => p.has_voted)) {
+          actionComplete = true;
+        }
+      } else if (room.phase === "HUNTER_SHOT") {
+        if (!gs.hunterPendingPlayerId) {
           actionComplete = true;
         }
       }
@@ -501,7 +532,7 @@ function RoomContent({ params }: RoomPageProps) {
             />
           ) : (
             <RoomArena
-              key={`${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.turn_number}`}
+              key={`${room.phase}-${room.game_state.nightStep ?? "main"}-${room.game_state.voteMode}-${room.game_state.stutteringJudgeUsed ? 1 : 0}-${room.turn_number}`}
               room={room}
               players={players}
               currentPlayer={currentPlayer}

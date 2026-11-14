@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  Bot,
   Check,
   ChevronDown,
   Clock,
@@ -12,6 +13,7 @@ import {
   Play,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Users,
   Volume2,
   Wand2,
@@ -24,8 +26,12 @@ import {
 } from "@/lib/balancer";
 import { triggerHaptic } from "@/lib/haptics";
 import {
+  clearTestBotsFromRoom,
   decodeAvatarToProfile,
+  isBotPlayer,
+  populateTestBotsInRoom,
   startGameInRoom,
+  startSoloTestGameWithBots,
   updateRoomComposition,
   updateRoomLobbySettings,
   updateRoomNarratorMode,
@@ -80,7 +86,11 @@ export function RoomLobby({
     0
   );
   const rolesMatchPlayers = totalRoles === players.length;
-  const canStart = players.length >= 4 && rolesMatchPlayers && !busy;
+  const botCount = players.filter((p) => isBotPlayer(p)).length;
+  const canStart =
+    !busy &&
+    players.length >= 1 &&
+    (players.length < 4 || rolesMatchPlayers);
 
   const activeRoleEntries = Object.entries(composition)
     .filter(([, count]) => (count ?? 0) > 0)
@@ -140,8 +150,9 @@ export function RoomLobby({
 
   const handleAdjustRole = (roleId: string, delta: number) => {
     if (!canManage) return;
+    const roleMax = ROLE_BY_ID[roleId]?.maxCount ?? 30;
     const current = composition[roleId] ?? 0;
-    const nextVal = Math.max(0, Math.min(20, current + delta));
+    const nextVal = Math.max(0, Math.min(roleMax, current + delta));
     if (nextVal === current) return;
 
     const nextComp: RoleComposition = {
@@ -490,15 +501,52 @@ export function RoomLobby({
 
       {/* Liste des joueurs dans le salon */}
       <section className="glass-panel rounded-3xl p-4 space-y-2.5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="inline-flex items-center gap-1.5 font-display text-xs font-bold uppercase tracking-wider text-amber-100">
             <Users className="h-3.5 w-3.5 text-amber-300" />
-            <span>Joueurs connectés ({players.length}/20)</span>
+            <span>Joueurs connectés ({players.length}/30)</span>
           </span>
-          {players.length < 4 && (
-            <span className="text-[10px] text-amber-300/85">
-              Min. 4 joueurs requis
-            </span>
+          {canManage ? (
+            <div className="flex items-center gap-1.5">
+              {players.length < 30 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    runLobbyTask(async () => {
+                      const target = Math.min(
+                        30,
+                        Math.max(8, players.length + 4, totalRoles)
+                      );
+                      await populateTestBotsInRoom(room, players, target);
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-full border border-purple-400/40 bg-purple-500/15 px-2.5 py-1 text-[10px] font-bold text-purple-200 hover:bg-purple-500/25 disabled:opacity-45"
+                >
+                  <Bot className="h-3 w-3" />
+                  <span>+ Bots IA</span>
+                </button>
+              )}
+              {botCount > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    runLobbyTask(() => clearTestBotsFromRoom(room.id))
+                  }
+                  className="inline-flex items-center gap-1 rounded-full border border-rose-400/35 bg-rose-500/15 px-2.5 py-1 text-[10px] font-bold text-rose-200 hover:bg-rose-500/25 disabled:opacity-45"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>Retirer ({botCount})</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            players.length < 4 && (
+              <span className="text-[10px] text-amber-300/85">
+                L&apos;hôte peut lancer dès 1+ joueur
+              </span>
+            )
           )}
         </div>
 
@@ -510,6 +558,7 @@ export function RoomLobby({
               p.is_owner
             );
             const playerIsHost = p.user_id === room.host_user_id;
+            const playerIsBot = isBotPlayer(p);
             return (
               <div
                 key={p.id}
@@ -523,6 +572,15 @@ export function RoomLobby({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1">
+                  {playerIsBot && (
+                    <span
+                      title="Joueur simulé par IA"
+                      className="inline-flex items-center gap-0.5 rounded-full border border-purple-400/35 bg-purple-500/15 px-1.5 py-0.5 text-[9px] font-bold text-purple-200"
+                    >
+                      <Bot className="h-2.5 w-2.5" />
+                      IA
+                    </span>
+                  )}
                   {playerIsHost && (
                     <span
                       title="Hôte du salon"
@@ -553,23 +611,47 @@ export function RoomLobby({
         </div>
       )}
 
-      {/* Lancer la partie */}
+      {/* Lancer la partie (actif dès 1 joueur pour l'hôte + Mode Test Solo/Bots) */}
       {canManage ? (
-        <button
-          type="button"
-          disabled={!canStart}
-          onClick={() => runLobbyTask(() => startGameInRoom(room, players))}
-          className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-700 via-crimson to-amber-600 text-sm font-bold text-white shadow-[0_12px_28px_rgba(155,27,48,0.45)] transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <Play className="h-4 w-4 fill-current" />
-          <span>
-            {players.length < 4
-              ? `En attente de joueurs (${players.length}/4 min.)`
-              : !rolesMatchPlayers
-                ? `Ajuster les rôles (${totalRoles}/${players.length})`
-                : "Lancer la partie"}
-          </span>
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={!canStart}
+            onClick={() => runLobbyTask(() => startGameInRoom(room, players))}
+            className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-rose-700 via-crimson to-amber-600 text-sm font-bold text-white shadow-[0_12px_28px_rgba(155,27,48,0.45)] transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Play className="h-4 w-4 fill-current" />
+            <span>
+              {players.length < 4
+                ? `Lancer en solo / rapide (${players.length} joueur${players.length > 1 ? "s" : ""})`
+                : !rolesMatchPlayers
+                  ? `Ajuster les rôles (${totalRoles}/${players.length})`
+                  : "Lancer la partie"}
+            </span>
+          </button>
+
+          {players.length < 6 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                runLobbyTask(() =>
+                  startSoloTestGameWithBots(
+                    room,
+                    players,
+                    totalRoles >= 6 ? totalRoles : 8
+                  )
+                )
+              }
+              className="glass-panel flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl border-purple-400/45 bg-purple-950/35 px-4 text-xs font-bold text-purple-100 transition hover:border-purple-300/70 hover:bg-purple-900/40 active:scale-[0.98] disabled:opacity-45"
+            >
+              <Bot className="h-4 w-4 text-purple-300" />
+              <span>
+                Lancer en mode test (Solo / Bots — {totalRoles >= 6 ? totalRoles : 8} joueurs)
+              </span>
+            </button>
+          )}
+        </div>
       ) : (
         <div className="glass-panel rounded-2xl px-4 py-3 text-center text-xs text-slate-300">
           En attente que l&apos;hôte lance la partie sous la Lune de Sang...

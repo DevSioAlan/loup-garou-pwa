@@ -11,7 +11,7 @@ export const GAME_ROLES: GameRole[] = [
     ability:
       "Chaque nuit, concertez-vous en silence avec la meute pour dévorer un villageois. Le jour, fondez-vous dans la foule.",
     lore: "Sous l'éclipse écarlate, l'instinct chasse toute pitié.",
-    maxCount: 8,
+    maxCount: 12,
     minPlayers: 4,
     aura: {
       primary: "#E11D48",
@@ -486,6 +486,116 @@ export const GAME_ROLES: GameRole[] = [
     },
   },
   {
+    id: "loup-mystique",
+    name: "Loup-Garou Noir (Mystique)",
+    subtitle: "Oracle de la Meute",
+    faction: "loup",
+    factionLabel: "Meute",
+    icon: "wand",
+    ability:
+      "Chassez avec la meute, puis sondez secrètement l'âme d'un habitant chaque nuit pour identifier les pouvoirs du village.",
+    lore: "Ses yeux violets percent les masques que même la nuit croyait cachés.",
+    maxCount: 1,
+    minPlayers: 8,
+    aura: {
+      primary: "#C026D3",
+      secondary: "#881337",
+      glowShadow:
+        "0 0 40px rgba(192, 38, 211, 0.56), 0 0 84px rgba(136, 19, 55, 0.42)",
+      borderClass: "border-fuchsia-400/55",
+      badgeClass: "bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-400/45",
+      surfaceGradient: "from-fuchsia-950/75 via-[#181024]/90 to-[#090A0F]/95",
+    },
+  },
+  {
+    id: "voleur",
+    name: "Voleur",
+    subtitle: "Ombres de la Table",
+    faction: "village",
+    factionLabel: "Village",
+    icon: "mask",
+    ability:
+      "Lors de la première nuit, consultez deux cartes secrètes écartées et choisissez d'endosser l'un de ces destins (ou gardez le vôtre).",
+    lore: "Deux vies l'attendent sur le velours sombre ; une seule lui appartiendra.",
+    maxCount: 1,
+    minPlayers: 5,
+    aura: {
+      primary: "#2DD4BF",
+      secondary: "#0F766E",
+      glowShadow:
+        "0 0 38px rgba(45, 212, 191, 0.48), 0 0 80px rgba(15, 118, 110, 0.3)",
+      borderClass: "border-teal-300/50",
+      badgeClass: "bg-teal-500/20 text-teal-200 border-teal-400/45",
+      surfaceGradient: "from-teal-950/75 via-[#111923]/90 to-[#090A0F]/95",
+    },
+  },
+  {
+    id: "pyromane",
+    name: "Pyromane",
+    subtitle: "Maître des Braises",
+    faction: "solitaire",
+    factionLabel: "Solitaire",
+    icon: "pyro",
+    ability:
+      "Chaque nuit, aspergez d'huile jusqu'à deux habitants ou déclenchez l'embrasement fatal sur toutes vos cibles marquées pour régner seul.",
+    lore: "Sous la lune froide, il ne suffit plus de fuir les crocs : le feu veille.",
+    maxCount: 1,
+    minPlayers: 9,
+    aura: {
+      primary: "#FB923C",
+      secondary: "#DC2626",
+      glowShadow:
+        "0 0 42px rgba(251, 146, 60, 0.56), 0 0 86px rgba(220, 38, 38, 0.36)",
+      borderClass: "border-orange-400/55",
+      badgeClass: "bg-orange-500/20 text-orange-200 border-orange-400/45",
+      surfaceGradient: "from-orange-950/75 via-[#1C1210]/90 to-[#090A0F]/95",
+    },
+  },
+  {
+    id: "comedien",
+    name: "Comédien",
+    subtitle: "Porteur de Trois Masques",
+    faction: "village",
+    factionLabel: "Village",
+    icon: "drama",
+    ability:
+      "Trois rôles du Village restent en réserve dans votre loge. Chaque nuit, revêtez un masque encore neuf pour utiliser son pouvoir.",
+    lore: "Trois visages d'emprunt pour déjouer les ombres de la meute.",
+    maxCount: 1,
+    minPlayers: 7,
+    aura: {
+      primary: "#C084FC",
+      secondary: "#7E22CE",
+      glowShadow:
+        "0 0 38px rgba(192, 132, 252, 0.5), 0 0 80px rgba(126, 34, 206, 0.34)",
+      borderClass: "border-purple-300/50",
+      badgeClass: "bg-purple-500/20 text-purple-200 border-purple-400/45",
+      surfaceGradient: "from-purple-950/75 via-[#181326]/90 to-[#090A0F]/95",
+    },
+  },
+  {
+    id: "juge-begue",
+    name: "Juge Bègue",
+    subtitle: "Gardien du Double Verdict",
+    faction: "village",
+    factionLabel: "Village",
+    icon: "gavel",
+    ability:
+      "Une fois par partie pendant le vote du jour, abattez secrètement votre marteau pour imposer un second vote d'élimination immédiat.",
+    lore: "Lorsque son verdict bégaie, le village condamne deux fois sous le même soleil.",
+    maxCount: 1,
+    minPlayers: 8,
+    aura: {
+      primary: "#FBBF24",
+      secondary: "#B45309",
+      glowShadow:
+        "0 0 38px rgba(251, 191, 36, 0.48), 0 0 78px rgba(180, 83, 9, 0.32)",
+      borderClass: "border-amber-300/50",
+      badgeClass: "bg-amber-500/20 text-amber-200 border-amber-400/45",
+      surfaceGradient: "from-amber-950/75 via-[#1B1610]/90 to-[#090A0F]/95",
+    },
+  },
+  {
     id: "simple-villageois",
     name: "Simple Villageois",
     subtitle: "Veilleur du Hameau",
@@ -495,7 +605,7 @@ export const GAME_ROLES: GameRole[] = [
     ability:
       "Aucun pouvoir nocturne, mais votre intuition, votre parole et votre vote restent les armes les plus sûres du village.",
     lore: "Dans l'ombre des soupçons, le bon sens vaut toutes les magies.",
-    maxCount: 16,
+    maxCount: 24,
     minPlayers: 4,
     aura: {
       primary: "#94A3B8",

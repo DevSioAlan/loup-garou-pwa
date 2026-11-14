@@ -51,7 +51,7 @@ const PHASE_ORDER: DemoGamePhase[] = ["distribution", "night", "dawn", "vote"];
  * Orchestrateur principal de l'accueil :
  * - Splash Screen animé avec crédit Alan Mirat
  * - Barre de profil rapide (localStorage) + Mode Owner secret (5 clics ou code alucard)
- * - Onglets mobiles : Carte Secrète 3D (14 rôles avec RoleStrip PC/mobile) & Configurateur intelligent (4-20 joueurs)
+ * - Onglets mobiles : Carte Secrète 3D (avec RoleStrip PC/mobile) & Configurateur intelligent (4-30 joueurs)
  * - Création (code 4 lettres + configurateur) et jonction de salon multijoueur Supabase
  */
 export function RoleDemoShowcase() {
@@ -99,7 +99,7 @@ export function RoleDemoShowcase() {
     GAME_ROLES.find((role) => role.id === selectedRoleId) ?? GAME_ROLES[0];
 
   const handlePlayerCountChange = (nextCount: number) => {
-    const clamped = Math.max(4, Math.min(20, nextCount));
+    const clamped = Math.max(4, Math.min(30, nextCount));
     setPlayerCount(clamped);
     const nextPreset = generateBalancedComposition(clamped, variantIndex);
     setComposition(nextPreset.composition);

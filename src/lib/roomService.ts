@@ -1,3 +1,4 @@
+import { buildLobbyPresetComposition } from "@/lib/balancer";
 import {
   createClient,
   getSupabaseProjectRefPrefix,
@@ -9,9 +10,12 @@ import {
   createInitialGameState,
   dealRolesToPlayers,
   didBearGrowl,
+  drawComedianMasks,
+  drawThiefReserveRoles,
   encodeProfileAvatar,
   evaluateVictory,
   generateRoomCode,
+  isBotPlayer,
   isEffectiveWolf,
   normalizeGameState,
   resolveDeathsWithCascade,
@@ -19,6 +23,7 @@ import {
   tallyTargetFromVoters,
 } from "@/lib/gameEngine";
 import type {
+  AvatarPresetId,
   GamePhase,
   NarratorMode,
   NightVictimEntry,
@@ -37,6 +42,7 @@ export {
   getAutoNarratorSpeech,
   getHumanNarratorScript,
   getPhaseLabel,
+  isBotPlayer,
   isEffectiveWolf,
   isWolfRole,
 } from "@/lib/gameEngine";
@@ -262,6 +268,18 @@ export async function joinRoomInSupabase(params: {
       .maybeSingle()
   );
 
+  if (!existingPlayer) {
+    const { count } = await withRequestTimeout(
+      supabase
+        .from("room_players")
+        .select("id", { count: "exact", head: true })
+        .eq("room_id", room.id)
+    );
+    if ((count ?? 0) >= 30) {
+      throw new Error("Ce salon est complet (30 joueurs maximum).");
+    }
+  }
+
   await upsertPlayerWithAvatarFallback({
     roomId: room.id,
     userId: params.userId,
@@ -400,12 +418,17 @@ export async function startGameInRoom(
     )
   );
 
+  const hasVoleur = assignments.some((a) => a.roleId === "voleur");
+  const hasComedian = assignments.some((a) => a.roleId === "comedien");
+
   const nextState: RoomGameState = {
     ...createInitialGameState(),
     dayDebateSeconds: existingSettings.dayDebateSeconds,
     mayorEnabled: existingSettings.mayorEnabled,
     primaryAudioUserId: existingSettings.primaryAudioUserId,
     ttsVoice: existingSettings.ttsVoice,
+    thiefOptions: hasVoleur ? drawThiefReserveRoles() : null,
+    comedianMasks: hasComedian ? drawComedianMasks() : [],
     eventLog: appendGameLog([], {
       turn: 1,
       phase: "system",
@@ -500,9 +523,51 @@ function resetNightTransientState(state: RoomGameState): RoomGameState {
     loupBlancTargetId: null,
     bearGrowledTonight: false,
     elderShieldTriggeredTonight: false,
+    mystiqueInspectedId: null,
+    pyromaneActedTonight: false,
+    pyromaneIgnitedTonight: false,
+    comedianActedTonight: false,
+    comedianPeekedPlayerId: null,
+    stutteringJudgeArmed: false,
     voteMode: "ELIMINATION",
     nightStep: null,
   };
+}
+
+async function triggerStutteringJudgeSecondVote(
+  roomId: string,
+  turnNumber: number,
+  state: RoomGameState,
+  prefixAnnouncement: string,
+  isAuto: boolean
+): Promise<void> {
+  const supabase = createClient();
+  const judgeText = `${prefixAnnouncement} Coup de marteau du Juge Bègue : un second vote d'élimination s'ouvre immédiatement !`;
+  const nextVoteState: RoomGameState = {
+    ...state,
+    voteMode: "ELIMINATION",
+    stutteringJudgeUsed: true,
+    stutteringJudgeArmed: false,
+    lastAnnouncement: judgeText,
+    eventLog: appendGameLog(state.eventLog, {
+      turn: turnNumber,
+      phase: "day",
+      text: `Jour ${turnNumber} : ${judgeText}`,
+    }),
+  };
+  await clearPlayerVotes(roomId);
+  await supabase
+    .from("rooms")
+    .update({
+      phase: "DAY_VOTE",
+      game_state: {
+        ...nextVoteState,
+        phaseDeadline: isAuto
+          ? buildPhaseDeadline("DAY_VOTE", null, nextVoteState)
+          : null,
+      },
+    })
+    .eq("id", roomId);
 }
 
 function assertAliveTarget(
@@ -775,10 +840,22 @@ export async function advanceRoomPhase(
     );
 
     if (!targetId) {
-      const nextTurn = room.turn_number + 1;
       const announcement = isTie
         ? "Égalité lors du vote : personne n'a été exécuté aujourd'hui."
         : "Aucun vote exprimé : le village garde le silence.";
+
+      if (activeState.stutteringJudgeArmed && !activeState.stutteringJudgeUsed) {
+        await triggerStutteringJudgeSecondVote(
+          room.id,
+          room.turn_number,
+          activeState,
+          announcement,
+          isAuto
+        );
+        return;
+      }
+
+      const nextTurn = room.turn_number + 1;
       const baseNextState: RoomGameState = {
         ...resetNightTransientState(activeState),
         nightVictims: [],
@@ -830,17 +907,32 @@ export async function advanceRoomPhase(
       votedTarget?.role === "idiot-du-village" &&
       !activeState.idiotSparedPlayerIds.includes(votedTarget.id)
     ) {
-      const nextTurn = room.turn_number + 1;
       const announcement = `${votedTarget.pseudo} est l'Idiot du Village ! Le hameau l'épargne (droit de vote retiré).`;
-      const baseNextState: RoomGameState = {
-        ...resetNightTransientState(activeState),
+      const sparedState: RoomGameState = {
+        ...activeState,
         idiotSparedPlayerIds: [
           ...activeState.idiotSparedPlayerIds,
           votedTarget.id,
         ],
+      };
+
+      if (sparedState.stutteringJudgeArmed && !sparedState.stutteringJudgeUsed) {
+        await triggerStutteringJudgeSecondVote(
+          room.id,
+          room.turn_number,
+          sparedState,
+          announcement,
+          isAuto
+        );
+        return;
+      }
+
+      const nextTurn = room.turn_number + 1;
+      const baseNextState: RoomGameState = {
+        ...resetNightTransientState(sparedState),
         nightVictims: [],
         lastAnnouncement: announcement,
-        eventLog: appendGameLog(activeState.eventLog, {
+        eventLog: appendGameLog(sparedState.eventLog, {
           turn: room.turn_number,
           phase: "day",
           text: `Jour ${room.turn_number} : ${votedTarget.pseudo} a été épargné par le conseil.`,
@@ -928,7 +1020,11 @@ export async function advanceRoomPhase(
           game_state: {
             ...stateAfterVote,
             hunterPendingPlayerId,
-            hunterReturnPhase: "NIGHT",
+            hunterReturnPhase:
+              stateAfterVote.stutteringJudgeArmed &&
+              !stateAfterVote.stutteringJudgeUsed
+                ? "DAY_VOTE"
+                : "NIGHT",
             phaseDeadline: isAuto ? buildPhaseDeadline("HUNTER_SHOT") : null,
           },
         })
@@ -961,6 +1057,20 @@ export async function advanceRoomPhase(
           },
         })
         .eq("id", room.id);
+      return;
+    }
+
+    if (
+      stateAfterVote.stutteringJudgeArmed &&
+      !stateAfterVote.stutteringJudgeUsed
+    ) {
+      await triggerStutteringJudgeSecondVote(
+        room.id,
+        room.turn_number,
+        stateAfterVote,
+        announcement,
+        isAuto
+      );
       return;
     }
 
@@ -1165,6 +1275,16 @@ async function resolveNightAndEnterDay(
     }
   }
 
+  // Embrasement du Pyromane (brûle toutes les cibles encore vivantes marquées d'huile)
+  if (state.pyromaneIgnitedTonight && state.oiledPlayerIds.length > 0) {
+    for (const oiledId of state.oiledPlayerIds) {
+      const target = players.find((p) => p.id === oiledId && p.is_alive);
+      if (target) {
+        initialDeaths.push({ playerId: target.id, cause: "pyromane" });
+      }
+    }
+  }
+
   const {
     updatedPlayers,
     victims,
@@ -1196,6 +1316,11 @@ async function resolveNightAndEnterDay(
     infectUsed: infectUsedNext,
     infectedPlayerIds: infectedPlayerIdsNext,
     wildChildTransformed: state.wildChildTransformed || wildChildTransformedNow,
+    oiledPlayerIds: state.pyromaneIgnitedTonight
+      ? []
+      : state.oiledPlayerIds.filter((id) =>
+          updatedPlayers.some((p) => p.id === id && p.is_alive)
+        ),
     corbeauTargetId:
       state.corbeauTargetId &&
       updatedPlayers.some((p) => p.id === state.corbeauTargetId && p.is_alive)
@@ -1797,7 +1922,10 @@ export async function submitHunterShotTarget(
 
   if (state.hunterReturnPhase === "DAY_VOTE") {
     const aliveCount = updatedPlayers.filter((p) => p.is_alive).length;
+    const isJudgeSecondVote =
+      stateAfterShot.stutteringJudgeArmed && !stateAfterShot.stutteringJudgeUsed;
     const shouldElectMayor =
+      !isJudgeSecondVote &&
       room.turn_number === 1 &&
       stateAfterShot.mayorEnabled &&
       !stateAfterShot.mayorPlayerId &&
@@ -1806,6 +1934,13 @@ export async function submitHunterShotTarget(
     const nextVoteState: RoomGameState = {
       ...stateAfterShot,
       voteMode: shouldElectMayor ? "MAYOR_ELECTION" : "ELIMINATION",
+      ...(isJudgeSecondVote
+        ? {
+            stutteringJudgeUsed: true,
+            stutteringJudgeArmed: false,
+            lastAnnouncement: `${shotText} Coup de marteau du Juge Bègue : un second vote d'élimination s'ouvre immédiatement !`,
+          }
+        : {}),
     };
     await clearPlayerVotes(room.id);
     await supabase
@@ -1948,4 +2083,779 @@ export async function resetRoomToLobby(
       game_state: freshState,
     })
     .eq("id", roomId);
+}
+
+/* ==================== NOUVEAUX RÔLES & POUVOIRS ==================== */
+
+export async function submitVoleurChoice(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  chosenRoleId: string | null
+): Promise<void> {
+  const actor = players.find((p) => p.id === actorId && p.is_alive);
+  if (!actor || actor.role !== "voleur") {
+    throw new Error("Seul le Voleur vivant peut agir cette nuit.");
+  }
+  const state = normalizeGameState(room.game_state);
+  if (state.thiefResolved) return;
+
+  const supabase = createClient();
+  let nextComedianMasks = state.comedianMasks;
+
+  if (chosenRoleId) {
+    if (!state.thiefOptions || !state.thiefOptions.includes(chosenRoleId)) {
+      throw new Error("Carte non disponible dans la réserve du Voleur.");
+    }
+    await supabase
+      .from("room_players")
+      .update({ role: chosenRoleId })
+      .eq("id", actor.id);
+    if (chosenRoleId === "comedien" && nextComedianMasks.length === 0) {
+      nextComedianMasks = drawComedianMasks();
+    }
+  }
+
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...state,
+        thiefResolved: true,
+        comedianMasks: nextComedianMasks,
+        readyUserIds: Array.from(new Set([...state.readyUserIds, actor.user_id])),
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitLoupMystiqueInspection(
+  room: RoomRecord,
+  targetPlayerId: string,
+  players?: RoomPlayerRecord[],
+  actorId?: string
+): Promise<void> {
+  if (players && actorId) {
+    assertAliveTarget(players, actorId, targetPlayerId, { allowSelf: false });
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...room.game_state,
+        mystiqueInspectedId: targetPlayerId,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitComedianMaskAction(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  payload: { maskId: string | null; targetPlayerId?: string | null }
+): Promise<void> {
+  const actor = players.find((p) => p.id === actorId && p.is_alive);
+  if (!actor || actor.role !== "comedien") {
+    throw new Error("Seul le Comédien vivant peut endosser un masque.");
+  }
+  const state = normalizeGameState(room.game_state);
+  const supabase = createClient();
+
+  if (!payload.maskId) {
+    await supabase
+      .from("rooms")
+      .update({
+        game_state: {
+          ...state,
+          comedianActedTonight: true,
+          readyUserIds: Array.from(new Set([...state.readyUserIds, actor.user_id])),
+        },
+      })
+      .eq("id", room.id);
+    return;
+  }
+
+  if (
+    !state.comedianMasks.includes(payload.maskId) ||
+    state.comedianUsedMasks.includes(payload.maskId)
+  ) {
+    throw new Error("Ce masque n'est plus disponible.");
+  }
+
+  if (!payload.targetPlayerId) {
+    throw new Error("Sélectionnez une cible pour activer ce masque.");
+  }
+
+  const nextUsedMasks = [...state.comedianUsedMasks, payload.maskId];
+  let patchState: RoomGameState = {
+    ...state,
+    comedianUsedMasks: nextUsedMasks,
+    comedianActedTonight: true,
+  };
+
+  if (payload.maskId === "voyante") {
+    assertAliveTarget(players, actorId, payload.targetPlayerId, {
+      allowSelf: false,
+    });
+    patchState = {
+      ...patchState,
+      comedianPeekedPlayerId: payload.targetPlayerId,
+    };
+  } else if (payload.maskId === "salvateur") {
+    assertAliveTarget(players, actorId, payload.targetPlayerId, {
+      allowSelf: true,
+    });
+    if (payload.targetPlayerId === state.salvateurLastTargetId) {
+      throw new Error("Impossible de protéger le même joueur deux nuits de suite.");
+    }
+    patchState = {
+      ...patchState,
+      salvateurTargetId: payload.targetPlayerId,
+    };
+  } else if (payload.maskId === "corbeau") {
+    assertAliveTarget(players, actorId, payload.targetPlayerId, {
+      allowSelf: false,
+    });
+    patchState = {
+      ...patchState,
+      corbeauTargetId: payload.targetPlayerId,
+    };
+  } else if (payload.maskId === "renard") {
+    assertAliveTarget(players, actorId, payload.targetPlayerId, {
+      allowSelf: false,
+    });
+    const res = checkFoxTargets(players, payload.targetPlayerId, state);
+    patchState = {
+      ...patchState,
+      foxLastResult: { names: res.names, hasWolf: res.hasWolf },
+    };
+  }
+
+  await supabase
+    .from("rooms")
+    .update({ game_state: patchState })
+    .eq("id", room.id);
+}
+
+export async function submitPyromaneOil(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string,
+  targetIds: string[]
+): Promise<void> {
+  const unique = Array.from(new Set(targetIds)).slice(0, 2);
+  if (unique.length === 0) {
+    throw new Error("Choisissez au moins un habitant à asperger d'huile.");
+  }
+  for (const id of unique) {
+    assertAliveTarget(players, actorId, id, { allowSelf: false });
+  }
+  const state = normalizeGameState(room.game_state);
+  const nextOiled = Array.from(new Set([...state.oiledPlayerIds, ...unique]));
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...state,
+        oiledPlayerIds: nextOiled,
+        pyromaneActedTonight: true,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitPyromaneIgnite(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string
+): Promise<void> {
+  const actor = players.find((p) => p.id === actorId && p.is_alive);
+  if (!actor || actor.role !== "pyromane") {
+    throw new Error("Seul le Pyromane vivant peut allumer l'embrasement.");
+  }
+  const state = normalizeGameState(room.game_state);
+  const hasAliveOiled = state.oiledPlayerIds.some((id) =>
+    players.some((p) => p.id === id && p.is_alive)
+  );
+  if (!hasAliveOiled) {
+    throw new Error("Aucune cible vivante n'est encore aspergée d'huile.");
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...state,
+        pyromaneIgnitedTonight: true,
+        pyromaneActedTonight: true,
+      },
+    })
+    .eq("id", room.id);
+}
+
+export async function submitJugeBegueArm(
+  room: RoomRecord,
+  players: RoomPlayerRecord[],
+  actorId: string
+): Promise<void> {
+  const actor = players.find((p) => p.id === actorId && p.is_alive);
+  if (!actor || actor.role !== "juge-begue") {
+    throw new Error("Seul le Juge Bègue vivant peut décréter un double vote.");
+  }
+  const state = normalizeGameState(room.game_state);
+  if (room.phase !== "DAY_VOTE" || state.voteMode !== "ELIMINATION") {
+    throw new Error("Ce pouvoir ne s'utilise que durant le vote d'élimination.");
+  }
+  if (state.stutteringJudgeUsed) {
+    throw new Error("Vous avez déjà utilisé votre coup de marteau dans cette partie.");
+  }
+  const supabase = createClient();
+  await supabase
+    .from("rooms")
+    .update({
+      game_state: {
+        ...state,
+        stutteringJudgeArmed: true,
+      },
+    })
+    .eq("id", room.id);
+}
+
+/* ==================== MODE TEST SOLO / JOUEURS IA (BOTS) ==================== */
+
+const BOT_DISPLAY_NAMES = [
+  "Lycan",
+  "Astrid",
+  "Corvus",
+  "Sélène",
+  "Dorian",
+  "Morgane",
+  "Kael",
+  "Éléonore",
+  "Théo",
+  "Cassandra",
+  "Lucian",
+  "Véra",
+  "Nolan",
+  "Isolde",
+  "Soren",
+  "Freya",
+  "Gaspard",
+  "Aurore",
+  "Bastien",
+  "Clémence",
+  "Victor",
+  "Héléna",
+  "Rémi",
+  "Ophélie",
+  "Cédric",
+  "Ysaline",
+  "Maxence",
+  "Sibylle",
+  "Alaric",
+];
+
+const BOT_AVATAR_PRESETS: AvatarPresetId[] = [
+  "wolf",
+  "moon",
+  "eye",
+  "flask",
+  "flame",
+  "shield",
+  "sparkles",
+  "bird",
+  "fox",
+  "music",
+  "sword",
+  "crown",
+];
+
+function pickRandom<T>(items: T[]): T | null {
+  if (items.length === 0) return null;
+  return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
+export async function populateTestBotsInRoom(
+  room: RoomRecord,
+  existingPlayers: RoomPlayerRecord[],
+  targetTotalCount = 8
+): Promise<RoomPlayerRecord[]> {
+  const supabase = createClient();
+  const desiredTotal = Math.max(
+    existingPlayers.length,
+    Math.min(30, targetTotalCount)
+  );
+  const botsNeeded = Math.max(0, desiredTotal - existingPlayers.length);
+
+  if (botsNeeded > 0) {
+    const usedIds = new Set(existingPlayers.map((p) => p.user_id));
+    const botRows: Array<{
+      room_id: string;
+      user_id: string;
+      pseudo: string;
+      avatar_data: string;
+      is_owner: boolean;
+      is_alive: boolean;
+      has_voted: boolean;
+      target_id: null;
+    }> = [];
+
+    let botIndex = 1;
+    while (botRows.length < botsNeeded && botIndex <= 35) {
+      const botUserId = `bot-${botIndex}`;
+      if (!usedIds.has(botUserId)) {
+        usedIds.add(botUserId);
+        const name =
+          BOT_DISPLAY_NAMES[(botIndex - 1) % BOT_DISPLAY_NAMES.length] ??
+          `Veilleur ${botIndex}`;
+        const preset =
+          BOT_AVATAR_PRESETS[(botIndex - 1) % BOT_AVATAR_PRESETS.length] ??
+          "wolf";
+        botRows.push({
+          room_id: room.id,
+          user_id: botUserId,
+          pseudo: `${name} (Bot)`,
+          avatar_data: `preset:${preset}`,
+          is_owner: false,
+          is_alive: true,
+          has_voted: false,
+          target_id: null,
+        });
+      }
+      botIndex += 1;
+    }
+
+    if (botRows.length > 0) {
+      const { error } = await withRequestTimeout(
+        supabase
+          .from("room_players")
+          .upsert(botRows, { onConflict: "room_id,user_id" })
+      );
+      if (error) {
+        throw new Error(
+          formatSupabaseError(error, "Impossible d'ajouter des joueurs IA.")
+        );
+      }
+    }
+  }
+
+  const { data: refreshed } = await supabase
+    .from("room_players")
+    .select("*")
+    .eq("room_id", room.id)
+    .order("joined_at", { ascending: true });
+
+  const allPlayers = (refreshed ?? existingPlayers) as RoomPlayerRecord[];
+  const totalComp = Object.values(room.role_composition ?? {}).reduce(
+    (s, n) => s + (Number(n) || 0),
+    0
+  );
+  if (allPlayers.length >= 4 && totalComp !== allPlayers.length) {
+    const nextComp = buildLobbyPresetComposition(
+      "chaos-alliances",
+      allPlayers.length
+    );
+    await supabase
+      .from("rooms")
+      .update({ role_composition: nextComp })
+      .eq("id", room.id);
+    room.role_composition = nextComp;
+  }
+
+  return allPlayers;
+}
+
+export async function clearTestBotsFromRoom(roomId: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("room_players")
+    .delete()
+    .eq("room_id", roomId)
+    .like("user_id", "bot-%");
+  if (error) {
+    throw new Error(
+      formatSupabaseError(error, "Impossible de retirer les joueurs IA.")
+    );
+  }
+}
+
+export async function startSoloTestGameWithBots(
+  room: RoomRecord,
+  existingPlayers: RoomPlayerRecord[],
+  targetTotal?: number
+): Promise<void> {
+  const compSum = Object.values(room.role_composition ?? {}).reduce(
+    (s, n) => s + (Number(n) || 0),
+    0
+  );
+  const desired = Math.max(
+    6,
+    Math.min(30, targetTotal ?? (compSum >= 6 ? compSum : 8))
+  );
+  const allPlayers = await populateTestBotsInRoom(room, existingPlayers, desired);
+
+  const updatedCompSum = Object.values(room.role_composition ?? {}).reduce(
+    (s, n) => s + (Number(n) || 0),
+    0
+  );
+  if (updatedCompSum !== allPlayers.length && allPlayers.length >= 4) {
+    room.role_composition = buildLobbyPresetComposition(
+      "chaos-alliances",
+      allPlayers.length
+    );
+    const supabase = createClient();
+    await supabase
+      .from("rooms")
+      .update({ role_composition: room.role_composition })
+      .eq("id", room.id);
+  }
+
+  await startGameInRoom(room, allPlayers);
+}
+
+/**
+ * Exécute automatiquement les actions en attente des joueurs IA (Bots) pour la phase active.
+ * Retourne true si au moins une action bot a été enregistrée.
+ */
+export async function performBotActionsForPhase(
+  room: RoomRecord,
+  players: RoomPlayerRecord[]
+): Promise<boolean> {
+  const supabase = createClient();
+  const state = normalizeGameState(room.game_state);
+  const alive = players.filter((p) => p.is_alive);
+
+  // 0. Succession du Maire si le Maire défunt était un Bot
+  if (state.mayorPendingSuccessorFromId) {
+    const deadMayor = players.find(
+      (p) => p.id === state.mayorPendingSuccessorFromId
+    );
+    if (deadMayor && isBotPlayer(deadMayor) && alive.length >= 2) {
+      const nextMayor = pickRandom(alive);
+      if (nextMayor) {
+        await submitMayorSuccessor(room, players, deadMayor.id, nextMayor.id);
+        return true;
+      }
+    }
+  }
+
+  if (room.phase === "ROLE_REVEAL") {
+    const unreadyBots = alive.filter(
+      (p) => isBotPlayer(p) && !state.readyUserIds.includes(p.user_id)
+    );
+    if (unreadyBots.length === 0) return false;
+    const nextReady = Array.from(
+      new Set([...state.readyUserIds, ...unreadyBots.map((b) => b.user_id)])
+    );
+    await supabase
+      .from("rooms")
+      .update({
+        game_state: { ...state, readyUserIds: nextReady },
+      })
+      .eq("id", room.id);
+    return true;
+  }
+
+  if (room.phase === "DAY_VOTE") {
+    const eligibleBots = alive.filter(
+      (p) =>
+        isBotPlayer(p) &&
+        !p.has_voted &&
+        (state.voteMode === "MAYOR_ELECTION" ||
+          !state.idiotSparedPlayerIds.includes(p.id))
+    );
+    if (eligibleBots.length === 0) return false;
+
+    await Promise.all(
+      eligibleBots.map(async (bot) => {
+        const others = alive.filter((a) => a.id !== bot.id);
+        if (others.length === 0) return;
+        const botIsWolf = isEffectiveWolf(bot, state);
+        const preferred =
+          state.voteMode === "ELIMINATION" && botIsWolf
+            ? others.filter((a) => !isEffectiveWolf(a, state))
+            : others;
+        const target = pickRandom(preferred.length > 0 ? preferred : others);
+        if (target) {
+          await submitVoteTarget(bot.id, target.id);
+        }
+      })
+    );
+    return true;
+  }
+
+  if (room.phase === "HUNTER_SHOT" && state.hunterPendingPlayerId) {
+    const hunter = players.find((p) => p.id === state.hunterPendingPlayerId);
+    if (hunter && isBotPlayer(hunter)) {
+      const target = pickRandom(alive.filter((a) => a.id !== hunter.id));
+      if (target) {
+        await submitHunterShotTarget(room, players, target.id);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (!room.phase.startsWith("NIGHT_")) return false;
+  const step = state.nightStep;
+
+  if (step === "voleur") {
+    const voleur = alive.find((p) => p.role === "voleur" && isBotPlayer(p));
+    if (voleur && !state.thiefResolved) {
+      const pick =
+        state.thiefOptions && Math.random() < 0.75
+          ? state.thiefOptions[0]
+          : null;
+      await submitVoleurChoice(room, players, voleur.id, pick);
+      return true;
+    }
+  } else if (step === "cupidon" || (!step && room.phase === "NIGHT_CUPIDON")) {
+    const cupidon = alive.find((p) => p.role === "cupidon" && isBotPlayer(p));
+    if (cupidon && state.cupidonTargets.length < 2) {
+      const pool = alive.filter((p) => p.id !== cupidon.id);
+      if (pool.length >= 2) {
+        await submitCupidonLovers(
+          room,
+          [pool[0].id, pool[1].id],
+          players,
+          cupidon.id
+        );
+        return true;
+      }
+    }
+  } else if (step === "enfant-sauvage") {
+    const wc = alive.find(
+      (p) => p.role === "enfant-sauvage" && isBotPlayer(p)
+    );
+    if (wc && !state.wildChildModelId) {
+      const target = pickRandom(alive.filter((p) => p.id !== wc.id));
+      if (target) {
+        await submitWildChildModel(room, players, wc.id, target.id);
+        return true;
+      }
+    }
+  } else if (step === "fratrie") {
+    const unreadySibs = alive.filter(
+      (p) =>
+        isBotPlayer(p) &&
+        (p.role === "soeurs" || p.role === "freres") &&
+        !state.readyUserIds.includes(p.user_id)
+    );
+    if (unreadySibs.length > 0) {
+      await supabase
+        .from("rooms")
+        .update({
+          game_state: {
+            ...state,
+            readyUserIds: Array.from(
+              new Set([...state.readyUserIds, ...unreadySibs.map((s) => s.user_id)])
+            ),
+          },
+        })
+        .eq("id", room.id);
+      return true;
+    }
+  } else if (step === "salvateur") {
+    const guard = alive.find((p) => p.role === "salvateur" && isBotPlayer(p));
+    if (guard && !state.salvateurTargetId) {
+      const candidates = alive.filter(
+        (p) => p.id !== state.salvateurLastTargetId
+      );
+      const target = pickRandom(candidates.length > 0 ? candidates : alive);
+      if (target) {
+        await submitSalvateurTarget(room, players, guard.id, target.id);
+        return true;
+      }
+    }
+  } else if (step === "voyante" || (!step && room.phase === "NIGHT_SEER")) {
+    const seer = alive.find((p) => p.role === "voyante" && isBotPlayer(p));
+    if (seer && !state.seerInspectedId) {
+      const target = pickRandom(alive.filter((p) => p.id !== seer.id));
+      if (target) {
+        await submitSeerInspection(room, target.id, players, seer.id);
+        return true;
+      }
+    }
+  } else if (step === "renard") {
+    const fox = alive.find((p) => p.role === "renard" && isBotPlayer(p));
+    if (fox && !state.foxCheckedTonight) {
+      const target = pickRandom(alive.filter((p) => p.id !== fox.id));
+      if (target) {
+        await submitRenardTargets(room, players, fox.id, target.id);
+        return true;
+      }
+    }
+  } else if (step === "comedien") {
+    const comedian = alive.find((p) => p.role === "comedien" && isBotPlayer(p));
+    if (comedian && !state.comedianActedTonight) {
+      const unused = state.comedianMasks.filter(
+        (m) => !state.comedianUsedMasks.includes(m)
+      );
+      const chosenMask = unused[0] ?? null;
+      const target =
+        chosenMask === "salvateur"
+          ? pickRandom(
+              alive.filter((p) => p.id !== state.salvateurLastTargetId)
+            )
+          : pickRandom(alive.filter((p) => p.id !== comedian.id));
+      await submitComedianMaskAction(room, players, comedian.id, {
+        maskId: target ? chosenMask : null,
+        targetPlayerId: target?.id ?? null,
+      });
+      return true;
+    }
+  } else if (step === "loups" || (!step && room.phase === "NIGHT_WEREWOLVES")) {
+    const botWolves = alive.filter(
+      (p) => isBotPlayer(p) && isEffectiveWolf(p, state) && !p.has_voted
+    );
+    if (botWolves.length > 0) {
+      const preys = alive.filter((p) => !isEffectiveWolf(p, state));
+      const prey = pickRandom(preys.length > 0 ? preys : alive);
+      if (prey) {
+        await Promise.all(
+          botWolves.map((wolf) =>
+            prey.id !== wolf.id ? submitVoteTarget(wolf.id, prey.id) : Promise.resolve()
+          )
+        );
+        return true;
+      }
+    }
+  } else if (step === "loup-mystique") {
+    const mystique = alive.find(
+      (p) => p.role === "loup-mystique" && isBotPlayer(p)
+    );
+    if (mystique && !state.mystiqueInspectedId) {
+      const preys = alive.filter(
+        (p) => p.id !== mystique.id && !isEffectiveWolf(p, state)
+      );
+      const target = pickRandom(
+        preys.length > 0 ? preys : alive.filter((p) => p.id !== mystique.id)
+      );
+      if (target) {
+        await submitLoupMystiqueInspection(room, target.id, players, mystique.id);
+        return true;
+      }
+    }
+  } else if (step === "loup-blanc") {
+    const ww = alive.find(
+      (p) => p.role === "loup-garou-blanc" && isBotPlayer(p)
+    );
+    if (
+      ww &&
+      !state.loupBlancTargetId &&
+      !state.readyUserIds.includes(ww.user_id)
+    ) {
+      const otherWolves = alive.filter(
+        (p) => p.id !== ww.id && isEffectiveWolf(p, state)
+      );
+      if (otherWolves.length > 0 && Math.random() < 0.45) {
+        const prey = pickRandom(otherWolves);
+        if (prey) {
+          await submitLoupBlancTarget(room, players, ww.id, prey.id);
+          return true;
+        }
+      }
+      await markPlayerReady(room, ww.user_id);
+      return true;
+    }
+  } else if (step === "grand-mechant-loup") {
+    const gml = alive.find(
+      (p) => p.role === "grand-mechant-loup" && isBotPlayer(p)
+    );
+    if (
+      gml &&
+      !state.grandMechantSecondTargetId &&
+      !state.readyUserIds.includes(gml.user_id)
+    ) {
+      const preys = alive.filter(
+        (p) => !isEffectiveWolf(p, state) && p.id !== state.wolfTargetId
+      );
+      const prey = pickRandom(preys);
+      if (prey) {
+        await submitGrandMechantTarget(room, players, gml.id, prey.id);
+      } else {
+        await markPlayerReady(room, gml.user_id);
+      }
+      return true;
+    }
+  } else if (step === "sorciere" || (!step && room.phase === "NIGHT_WITCH")) {
+    const witch = alive.find((p) => p.role === "sorciere" && isBotPlayer(p));
+    if (
+      witch &&
+      !state.witchSaveTonight &&
+      !state.witchKillTargetId &&
+      !state.readyUserIds.includes(witch.user_id)
+    ) {
+      const saveVictim = Boolean(
+        !state.witchLifeUsed &&
+          state.wolfTargetId &&
+          state.wolfTargetId !== state.salvateurTargetId &&
+          Math.random() < 0.5
+      );
+      let killTargetId: string | null = null;
+      if (!state.witchDeathUsed && Math.random() < 0.25) {
+        killTargetId =
+          pickRandom(
+            alive.filter((p) => p.id !== witch.id && p.id !== state.wolfTargetId)
+          )?.id ?? null;
+      }
+      await submitWitchDecision(
+        room,
+        { saveWolfVictim: saveVictim, killTargetId },
+        players,
+        witch.id
+      );
+      await markPlayerReady(room, witch.user_id);
+      return true;
+    }
+  } else if (step === "corbeau") {
+    const crow = alive.find((p) => p.role === "corbeau" && isBotPlayer(p));
+    if (crow && !state.corbeauTargetId) {
+      const target = pickRandom(alive.filter((p) => p.id !== crow.id));
+      if (target) {
+        await submitCorbeauTarget(room, players, crow.id, target.id);
+        return true;
+      }
+    }
+  } else if (step === "pyromane") {
+    const pyro = alive.find((p) => p.role === "pyromane" && isBotPlayer(p));
+    if (pyro && !state.pyromaneActedTonight) {
+      const oiledAlive = alive.filter((p) => state.oiledPlayerIds.includes(p.id));
+      const unoiled = alive.filter(
+        (p) => p.id !== pyro.id && !state.oiledPlayerIds.includes(p.id)
+      );
+      if (oiledAlive.length >= 2 || (oiledAlive.length >= 1 && unoiled.length === 0)) {
+        await submitPyromaneIgnite(room, players, pyro.id);
+        return true;
+      }
+      if (unoiled.length > 0) {
+        const chosen = unoiled.slice(0, 2).map((p) => p.id);
+        await submitPyromaneOil(room, players, pyro.id, chosen);
+        return true;
+      }
+    }
+  } else if (step === "joueur-de-flute") {
+    const piper = alive.find(
+      (p) => p.role === "joueur-de-flute" && isBotPlayer(p)
+    );
+    if (piper && state.piperTargetsTonight.length === 0) {
+      const uncharmed = alive.filter(
+        (p) => p.id !== piper.id && !state.charmedPlayerIds.includes(p.id)
+      );
+      if (uncharmed.length > 0) {
+        await submitPiperTargets(
+          room,
+          players,
+          piper.id,
+          uncharmed.slice(0, 2).map((p) => p.id)
+        );
+        return true;
+      }
+    }
+  }
+
+  return false;
 }

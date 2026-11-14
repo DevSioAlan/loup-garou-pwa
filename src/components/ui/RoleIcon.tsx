@@ -7,10 +7,13 @@ import {
   Crosshair,
   Crown,
   Dog,
+  Drama,
   Eye,
   Feather,
   Flame,
+  FlameKindling,
   FlaskConical,
+  Gavel,
   Heart,
   Moon,
   Music,
@@ -22,6 +25,8 @@ import {
   Sword,
   User,
   Users,
+  VenetianMask,
+  Wand2,
 } from "lucide-react";
 import type { RoleIconName } from "@/types/game";
 
@@ -45,6 +50,7 @@ function getIconAnimation(icon: RoleIconName): {
         duration: 3.4,
       };
     case "flame":
+    case "pyro":
       return {
         animate: {
           scale: [1, 1.09, 0.96, 1.06, 1],
@@ -73,6 +79,7 @@ function getIconAnimation(icon: RoleIconName): {
         duration: 2.5,
       };
     case "sword":
+    case "gavel":
       return {
         animate: {
           rotate: [-4, 4, -4],
@@ -95,6 +102,9 @@ function getIconAnimation(icon: RoleIconName): {
         duration: 2.8,
       };
     case "eye":
+    case "wand":
+    case "mask":
+    case "drama":
       return {
         animate: { scale: [1, 1.07, 1], opacity: [0.86, 1, 0.86] },
         duration: 3.0,
@@ -161,6 +171,16 @@ function renderGlyph(
       return <Sword {...props} />;
     case "users":
       return <Users {...props} />;
+    case "wand":
+      return <Wand2 {...props} />;
+    case "mask":
+      return <VenetianMask {...props} />;
+    case "pyro":
+      return <FlameKindling {...props} />;
+    case "drama":
+      return <Drama {...props} />;
+    case "gavel":
+      return <Gavel {...props} />;
     case "user":
     default:
       return <User {...props} />;

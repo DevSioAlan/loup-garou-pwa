@@ -11,10 +11,42 @@ import type {
 
 export const WOLF_ROLE_IDS = [
   "loup-garou",
+  "loup-mystique",
   "loup-garou-blanc",
   "grand-mechant-loup",
   "infect-pere-des-loups",
 ];
+
+export function isBotPlayer(
+  player: Pick<RoomPlayerRecord, "user_id"> | null | undefined
+): boolean {
+  return Boolean(player?.user_id?.startsWith("bot-"));
+}
+
+const COMEDIAN_MASK_POOL = ["voyante", "salvateur", "corbeau", "renard"];
+const THIEF_RESERVE_POOL = [
+  "voyante",
+  "sorciere",
+  "salvateur",
+  "chasseur",
+  "cupidon",
+  "corbeau",
+  "renard",
+  "comedien",
+  "juge-begue",
+  "loup-garou",
+  "simple-villageois",
+];
+
+export function drawComedianMasks(): string[] {
+  const shuffled = [...COMEDIAN_MASK_POOL].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, 3);
+}
+
+export function drawThiefReserveRoles(): [string, string] {
+  const shuffled = [...THIEF_RESERVE_POOL].sort(() => Math.random() - 0.5);
+  return [shuffled[0] ?? "voyante", shuffled[1] ?? "loup-garou"];
+}
 
 const VALID_AVATAR_PRESETS = new Set<AvatarPresetId>([
   "wolf",
@@ -35,17 +67,21 @@ const NIGHT_STEP_ORDER: Array<{
   step: Exclude<NightStepId, null>;
   phase: GamePhase;
 }> = [
+  { step: "voleur", phase: "NIGHT_CUPIDON" },
   { step: "cupidon", phase: "NIGHT_CUPIDON" },
   { step: "enfant-sauvage", phase: "NIGHT_CUPIDON" },
   { step: "fratrie", phase: "NIGHT_CUPIDON" },
   { step: "salvateur", phase: "NIGHT_SEER" },
   { step: "voyante", phase: "NIGHT_SEER" },
   { step: "renard", phase: "NIGHT_SEER" },
+  { step: "comedien", phase: "NIGHT_SEER" },
   { step: "loups", phase: "NIGHT_WEREWOLVES" },
+  { step: "loup-mystique", phase: "NIGHT_WEREWOLVES" },
   { step: "loup-blanc", phase: "NIGHT_WEREWOLVES" },
   { step: "grand-mechant-loup", phase: "NIGHT_WEREWOLVES" },
   { step: "sorciere", phase: "NIGHT_WITCH" },
   { step: "corbeau", phase: "NIGHT_WITCH" },
+  { step: "pyromane", phase: "NIGHT_WITCH" },
   { step: "joueur-de-flute", phase: "NIGHT_WITCH" },
 ];
 
@@ -124,6 +160,18 @@ export function createInitialGameState(): RoomGameState {
     voteMode: "ELIMINATION",
     primaryAudioUserId: null,
     ttsVoice: "Aoede",
+    mystiqueInspectedId: null,
+    thiefOptions: null,
+    thiefResolved: false,
+    oiledPlayerIds: [],
+    pyromaneActedTonight: false,
+    pyromaneIgnitedTonight: false,
+    comedianMasks: [],
+    comedianUsedMasks: [],
+    comedianActedTonight: false,
+    comedianPeekedPlayerId: null,
+    stutteringJudgeUsed: false,
+    stutteringJudgeArmed: false,
     eventLog: [],
     reactions: {},
   };
@@ -153,6 +201,15 @@ export function normalizeGameState(
     idiotSparedPlayerIds: Array.isArray(raw.idiotSparedPlayerIds)
       ? raw.idiotSparedPlayerIds
       : [],
+    oiledPlayerIds: Array.isArray(raw.oiledPlayerIds) ? raw.oiledPlayerIds : [],
+    comedianMasks: Array.isArray(raw.comedianMasks) ? raw.comedianMasks : [],
+    comedianUsedMasks: Array.isArray(raw.comedianUsedMasks)
+      ? raw.comedianUsedMasks
+      : [],
+    thiefOptions:
+      Array.isArray(raw.thiefOptions) && raw.thiefOptions.length === 2
+        ? [String(raw.thiefOptions[0]), String(raw.thiefOptions[1])]
+        : null,
     dayDebateSeconds:
       raw.dayDebateSeconds === undefined ? 120 : raw.dayDebateSeconds,
     mayorEnabled: raw.mayorEnabled ?? true,
@@ -163,6 +220,14 @@ export function normalizeGameState(
       raw.voteMode === "MAYOR_ELECTION" ? "MAYOR_ELECTION" : "ELIMINATION",
     primaryAudioUserId: raw.primaryAudioUserId ?? null,
     ttsVoice: raw.ttsVoice === "Kore" ? "Kore" : "Aoede",
+    mystiqueInspectedId: raw.mystiqueInspectedId ?? null,
+    thiefResolved: Boolean(raw.thiefResolved),
+    pyromaneActedTonight: Boolean(raw.pyromaneActedTonight),
+    pyromaneIgnitedTonight: Boolean(raw.pyromaneIgnitedTonight),
+    comedianActedTonight: Boolean(raw.comedianActedTonight),
+    comedianPeekedPlayerId: raw.comedianPeekedPlayerId ?? null,
+    stutteringJudgeUsed: Boolean(raw.stutteringJudgeUsed),
+    stutteringJudgeArmed: Boolean(raw.stutteringJudgeArmed),
     eventLog: Array.isArray(raw.eventLog) ? raw.eventLog : [],
     reactions:
       raw.reactions && typeof raw.reactions === "object" ? raw.reactions : {},
@@ -279,6 +344,7 @@ export function getPhaseDurationSeconds(
 
   if (phase.startsWith("NIGHT_")) {
     switch (nightStep) {
+      case "voleur":
       case "cupidon":
         return 25;
       case "enfant-sauvage":
@@ -288,14 +354,17 @@ export function getPhaseDurationSeconds(
       case "salvateur":
       case "voyante":
       case "renard":
+      case "comedien":
       case "corbeau":
         return 24;
       case "loups":
         return 35;
+      case "loup-mystique":
       case "loup-blanc":
       case "grand-mechant-loup":
         return 24;
       case "sorciere":
+      case "pyromane":
       case "joueur-de-flute":
         return 26;
       default:
@@ -329,6 +398,10 @@ export function isNightStepActive(
     alive.filter((p) => p.role === roleId).length;
 
   switch (step) {
+    case "voleur":
+      return (
+        turnNumber === 1 && hasAliveRole("voleur") && !gameState.thiefResolved
+      );
     case "cupidon":
       return (
         turnNumber === 1 &&
@@ -354,8 +427,17 @@ export function isNightStepActive(
       return hasAliveRole("voyante");
     case "renard":
       return hasAliveRole("renard") && !gameState.foxUsedWrongly;
+    case "comedien":
+      return (
+        hasAliveRole("comedien") &&
+        gameState.comedianMasks.some(
+          (m) => !gameState.comedianUsedMasks.includes(m)
+        )
+      );
     case "loups":
       return alive.some((p) => isEffectiveWolf(p, gameState));
+    case "loup-mystique":
+      return hasAliveRole("loup-mystique");
     case "loup-blanc":
       return (
         turnNumber % 2 === 0 &&
@@ -375,6 +457,8 @@ export function isNightStepActive(
       );
     case "corbeau":
       return hasAliveRole("corbeau");
+    case "pyromane":
+      return hasAliveRole("pyromane");
     case "joueur-de-flute":
       return (
         hasAliveRole("joueur-de-flute") &&
@@ -605,6 +689,17 @@ export function evaluateVictory(
 
   const aliveWolves = alive.filter((p) => isEffectiveWolf(p, gameState));
   const aliveNonWolves = alive.filter((p) => !isEffectiveWolf(p, gameState));
+  const alivePyromane = alive.find((p) => p.role === "pyromane");
+
+  // Victoire solitaire du Pyromane
+  if (alive.length === 1 && alivePyromane) {
+    return {
+      winnerCamp: "solitaire",
+      winnerTitle: "Victoire du Pyromane",
+      winnerReason:
+        "Le Pyromane a réduit tout le village et la meute en cendres ; il règne seul sur les braises.",
+    };
+  }
 
   // Victoire solitaire du Loup-Garou Blanc
   if (alive.length === 1 && alive[0].role === "loup-garou-blanc") {
@@ -616,7 +711,7 @@ export function evaluateVictory(
     };
   }
 
-  if (aliveWolves.length === 0) {
+  if (aliveWolves.length === 0 && !alivePyromane) {
     return {
       winnerCamp: "village",
       winnerTitle: "Victoire du Village",
@@ -624,7 +719,7 @@ export function evaluateVictory(
     };
   }
 
-  if (aliveWolves.length >= aliveNonWolves.length) {
+  if (aliveWolves.length >= aliveNonWolves.length && !alivePyromane) {
     if (aliveWolves.length === 1 && aliveWolves[0].role === "loup-garou-blanc") {
       return {
         winnerCamp: "solitaire",
@@ -810,17 +905,21 @@ export function getPhaseLabel(
 ): string {
   if (phase.startsWith("NIGHT_") && nightStep) {
     const stepLabels: Record<Exclude<NightStepId, null>, string> = {
+      voleur: "Nuit • Le Voleur",
       cupidon: "Nuit • Cupidon",
       "enfant-sauvage": "Nuit • Enfant Sauvage",
       fratrie: "Nuit • Sœurs & Frères",
       salvateur: "Nuit • Le Salvateur",
       voyante: "Nuit • La Voyante",
       renard: "Nuit • Le Renard",
+      comedien: "Nuit • Le Comédien",
       loups: "Nuit • Les Loups-Garous",
+      "loup-mystique": "Nuit • Loup Noir Mystique",
       "loup-blanc": "Nuit • Loup-Garou Blanc",
       "grand-mechant-loup": "Nuit • Grand Méchant Loup",
       sorciere: "Nuit • La Sorcière",
       corbeau: "Nuit • Le Corbeau",
+      pyromane: "Nuit • Le Pyromane",
       "joueur-de-flute": "Nuit • Joueur de Flûte",
     };
     return stepLabels[nightStep];
@@ -867,6 +966,9 @@ export function getHumanNarratorScript(
     case "ROLE_REVEAL":
       return "Demandez à chacun de regarder discrètement son rôle (appui long sur sa carte) puis d'appuyer sur Prêt. Lorsque tout le monde est prêt, lancez la première nuit.";
     case "NIGHT_CUPIDON":
+      if (step === "voleur") {
+        return "Avant que la nuit ne s'épaississe, le Voleur ouvre les yeux, examine les deux cartes écartées et choisit s'il échange son destin.";
+      }
       if (step === "enfant-sauvage") {
         return "Villageois, gardez les yeux clos. L'Enfant Sauvage choisit secrètement son modèle.";
       }
@@ -881,8 +983,14 @@ export function getHumanNarratorScript(
       if (step === "renard") {
         return "Le Renard se réveille et désigne un groupe de trois voisins à flairer.";
       }
+      if (step === "comedien") {
+        return "Le Comédien ouvre sa loge secrète et choisit s'il endosse l'un de ses masques disponibles pour cette nuit.";
+      }
       return "La Voyante se réveille, observe secrètement l'identité d'un joueur, puis se rendort.";
     case "NIGHT_WEREWOLVES":
+      if (step === "loup-mystique") {
+        return "Le Loup-Garou Noir (Mystique) rouvre discrètement les yeux pour sonder l'identité réelle d'un villageois.";
+      }
       if (step === "loup-blanc") {
         return "La meute s'endort. Le Loup-Garou Blanc rouvre les yeux et choisit s'il élimine un autre loup cette nuit.";
       }
@@ -893,6 +1001,9 @@ export function getHumanNarratorScript(
     case "NIGHT_WITCH":
       if (step === "corbeau") {
         return "Le Corbeau désigne la personne qui recevra deux voix supplémentaires contre elle au lever du jour.";
+      }
+      if (step === "pyromane") {
+        return "Le Pyromane étend sa traînée d'huile sur jusqu'à deux habitants — ou embrase ses cibles marquées.";
       }
       if (step === "joueur-de-flute") {
         return "Le Joueur de Flûte charme jusqu'à deux habitants silencieux, puis se rendort.";
@@ -949,6 +1060,9 @@ export function getAutoNarratorSpeech(
     case "ROLE_REVEAL":
       return "Le village s'installe sous la lune. Maintenez votre carte pour mémoriser votre rôle secret.";
     case "NIGHT_CUPIDON":
+      if (step === "voleur") {
+        return "La nuit tombe. Le Voleur examine deux destins secrets dans l'ombre avant le sommeil du village.";
+      }
       if (step === "enfant-sauvage") {
         return "Cupidon s'endort. L'Enfant Sauvage se réveille et choisit son modèle.";
       }
@@ -963,8 +1077,14 @@ export function getAutoNarratorSpeech(
       if (step === "renard") {
         return "Le Renard se faufile dans la brume pour flairer la trace des loups.";
       }
+      if (step === "comedien") {
+        return "Dans sa loge nocturne, le Comédien choisit l'un de ses masques et s'empare de son pouvoir.";
+      }
       return `La nuit ${turnNumber} s'étend sur le village. La Voyante ouvre les yeux et sonde l'âme d'un joueur.`;
     case "NIGHT_WEREWOLVES":
+      if (step === "loup-mystique") {
+        return "Le Loup-Garou Noir ouvre ses yeux mystiques pour lire le rôle secret d'un villageois.";
+      }
       if (step === "loup-blanc") {
         return "La meute s'endort. Seul le Loup-Garou Blanc rouvre les yeux et décide s'il frappe l'un des siens.";
       }
@@ -975,6 +1095,9 @@ export function getAutoNarratorSpeech(
     case "NIGHT_WITCH":
       if (step === "corbeau") {
         return "Le Corbeau s'envole dans la nuit et dépose sa malédiction sur un habitant.";
+      }
+      if (step === "pyromane") {
+        return "Une odeur d'huile et de cendres flotte dans la ruelle : le Pyromane prépare sa flamme.";
       }
       if (step === "joueur-de-flute") {
         return "Le Joueur de Flûte entonne une douce mélodie et ensorcelle deux nouveaux esprits.";
@@ -1009,6 +1132,10 @@ export function getAutoNarratorSpeech(
         if (victims[0].cause === "tetanos") {
           parts.push(
             `Le village découvre avec stupeur que ${victims[0].pseudo} vient de succomber à une blessure empoisonnée de la nuit précédente.`
+          );
+        } else if (victims[0].cause === "pyromane") {
+          parts.push(
+            `Des cendres fumantes s'élèvent à l'aube : ${victims[0].pseudo} a péri dans les flammes du Pyromane.`
           );
         } else {
           parts.push(
@@ -1064,6 +1191,7 @@ export function didPlayerWinVictory(
     const title = gameState.winnerTitle ?? "";
     if (title.includes("Ange")) return player.role === "ange";
     if (title.includes("Flûte")) return player.role === "joueur-de-flute";
+    if (title.includes("Pyromane")) return player.role === "pyromane";
     if (title.includes("Loup-Garou Blanc")) {
       return player.role === "loup-garou-blanc";
     }
@@ -1079,7 +1207,8 @@ export function didPlayerWinVictory(
       !isEffectiveWolf(player, gameState) &&
       player.role !== "loup-garou-blanc" &&
       player.role !== "joueur-de-flute" &&
-      player.role !== "ange"
+      player.role !== "ange" &&
+      player.role !== "pyromane"
     );
   }
 

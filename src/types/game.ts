@@ -22,7 +22,12 @@ export type RoleIconName =
   | "biohazard"
   | "sword"
   | "users"
-  | "pawprint";
+  | "pawprint"
+  | "wand"
+  | "mask"
+  | "pyro"
+  | "drama"
+  | "gavel";
 
 export interface RoleAuraTheme {
   /** Couleur principale de l'aura (hex) */
@@ -94,17 +99,21 @@ export type GamePhase =
   | "VICTORY";
 
 export type NightStepId =
+  | "voleur"
   | "cupidon"
   | "enfant-sauvage"
   | "fratrie"
   | "salvateur"
   | "voyante"
   | "renard"
+  | "comedien"
   | "loups"
+  | "loup-mystique"
   | "loup-blanc"
   | "grand-mechant-loup"
   | "sorciere"
   | "corbeau"
+  | "pyromane"
   | "joueur-de-flute"
   | null;
 
@@ -118,7 +127,8 @@ export interface NightVictimEntry {
     | "chagrin"
     | "village"
     | "chasseur"
-    | "tetanos";
+    | "tetanos"
+    | "pyromane";
 }
 
 export interface GameLogEntry {
@@ -192,6 +202,18 @@ export interface RoomGameState {
   voteMode: "MAYOR_ELECTION" | "ELIMINATION";
   primaryAudioUserId: string | null;
   ttsVoice: TtsVoiceName;
+  mystiqueInspectedId: string | null;
+  thiefOptions: [string, string] | null;
+  thiefResolved: boolean;
+  oiledPlayerIds: string[];
+  pyromaneActedTonight: boolean;
+  pyromaneIgnitedTonight: boolean;
+  comedianMasks: string[];
+  comedianUsedMasks: string[];
+  comedianActedTonight: boolean;
+  comedianPeekedPlayerId: string | null;
+  stutteringJudgeUsed: boolean;
+  stutteringJudgeArmed: boolean;
 }
 
 export interface RoomRecord {

@@ -3,18 +3,24 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Bot,
   ChevronDown,
   Crown,
   HeartPulse,
   RotateCcw,
   Skull,
   SkipForward,
+  Trash2,
 } from "lucide-react";
 import { triggerHaptic } from "@/lib/haptics";
 import {
   advanceRoomPhase,
+  clearTestBotsFromRoom,
   getPhaseLabel,
+  isBotPlayer,
   ownerTogglePlayerAlive,
+  performBotActionsForPhase,
+  populateTestBotsInRoom,
   resetRoomToLobby,
 } from "@/lib/roomService";
 import type { RoomPlayerRecord, RoomRecord } from "@/types/game";
@@ -66,6 +72,45 @@ export function RoomOwnerPanel({
     triggerHaptic(25);
     try {
       await ownerTogglePlayerAlive(player.id, !player.is_alive);
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const botCount = players.filter((p) => isBotPlayer(p)).length;
+
+  const handleAddBots = async () => {
+    setBusy(true);
+    triggerHaptic(20);
+    try {
+      await populateTestBotsInRoom(
+        room,
+        players,
+        Math.min(30, Math.max(8, players.length + 4))
+      );
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClearBots = async () => {
+    setBusy(true);
+    triggerHaptic(20);
+    try {
+      await clearTestBotsFromRoom(room.id);
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSimulateBots = async () => {
+    setBusy(true);
+    triggerHaptic(20);
+    try {
+      await performBotActionsForPhase(room, players);
       await onRefresh();
     } finally {
       setBusy(false);
@@ -128,6 +173,41 @@ export function RoomOwnerPanel({
                 >
                   <RotateCcw className="h-3.5 w-3.5 text-rose-300" />
                   <span>Relancer partie</span>
+                </button>
+              </div>
+
+              {/* Commandes Bots IA pour test solo rapide */}
+              <div className="grid grid-cols-2 gap-2">
+                {room.phase === "LOBBY" ? (
+                  <button
+                    type="button"
+                    disabled={busy || players.length >= 30}
+                    onClick={handleAddBots}
+                    className="flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border border-purple-400/35 bg-purple-500/15 px-3 text-[11px] font-semibold text-purple-100 disabled:opacity-40"
+                  >
+                    <Bot className="h-3.5 w-3.5 text-purple-300" />
+                    <span>Ajouter Bots (+4)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy || botCount === 0 || room.phase === "VICTORY"}
+                    onClick={handleSimulateBots}
+                    className="flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border border-purple-400/35 bg-purple-500/15 px-3 text-[11px] font-semibold text-purple-100 disabled:opacity-40"
+                  >
+                    <Bot className="h-3.5 w-3.5 text-purple-300" />
+                    <span>Simuler tour Bots</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  disabled={busy || botCount === 0}
+                  onClick={handleClearBots}
+                  className="flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-black/40 px-3 text-[11px] font-semibold text-slate-200 disabled:opacity-35"
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-rose-300" />
+                  <span>Retirer Bots ({botCount})</span>
                 </button>
               </div>
 

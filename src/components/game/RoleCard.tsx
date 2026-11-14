@@ -23,7 +23,8 @@ function getRoleAuraFamily(roleId: string): RoleAuraFamily {
     roleId === "loup-garou" ||
     roleId === "loup-garou-blanc" ||
     roleId === "grand-mechant-loup" ||
-    roleId === "infect-pere-des-loups"
+    roleId === "infect-pere-des-loups" ||
+    roleId === "loup-mystique"
   ) {
     return "wolf";
   }
@@ -32,14 +33,17 @@ function getRoleAuraFamily(roleId: string): RoleAuraFamily {
     roleId === "sorciere" ||
     roleId === "cupidon" ||
     roleId === "corbeau" ||
-    roleId === "renard"
+    roleId === "renard" ||
+    roleId === "voleur" ||
+    roleId === "comedien"
   ) {
     return "mystic";
   }
   if (
     roleId === "ange" ||
     roleId === "enfant-sauvage" ||
-    roleId === "joueur-de-flute"
+    roleId === "joueur-de-flute" ||
+    roleId === "pyromane"
   ) {
     return "solitaire";
   }
@@ -354,7 +358,10 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
               />
             )}
 
-            {(role.id === "servante-devouee" || role.id === "montreur-dours") && (
+            {(role.id === "servante-devouee" ||
+              role.id === "montreur-dours" ||
+              role.id === "comedien" ||
+              role.id === "juge-begue") && (
               <motion.div
                 animate={{ scale: [0.95, 1.08, 0.95], opacity: [0.4, 0.72, 0.4] }}
                 transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
@@ -362,6 +369,38 @@ function RoleAuraStage({ role, active, intense, tilt }: RoleAuraStageProps) {
                 style={{
                   background: `radial-gradient(circle, ${role.aura.primary}55, ${role.aura.secondary}26 55%, transparent 76%)`,
                 }}
+              />
+            )}
+
+            {role.id === "loup-mystique" && (
+              <motion.div
+                animate={{ scale: [0.94, 1.1, 0.94], opacity: [0.42, 0.8, 0.42] }}
+                transition={{ duration: 3.1, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-2 rounded-full blur-2xl"
+                style={{
+                  background:
+                    "radial-gradient(circle at 50% 45%, rgba(225, 29, 72, 0.5), rgba(147, 51, 234, 0.34) 52%, transparent 78%)",
+                }}
+              />
+            )}
+
+            {role.id === "pyromane" && (
+              <motion.div
+                animate={{ scale: [0.96, 1.12, 0.96], opacity: [0.48, 0.86, 0.48] }}
+                transition={{ duration: 2.3, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute inset-2 rounded-full blur-2xl"
+                style={{
+                  background:
+                    "radial-gradient(circle at 50% 62%, rgba(249, 115, 22, 0.56), rgba(220, 38, 38, 0.36) 50%, transparent 78%)",
+                }}
+              />
+            )}
+
+            {role.id === "voleur" && (
+              <motion.div
+                animate={{ rotate: [0, 360] }}
+                transition={{ duration: 16, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-3 rounded-full border border-dashed border-cyan-400/35 blur-[1px]"
               />
             )}
           </motion.div>
@@ -537,209 +576,226 @@ export function RoleCard({ role, ambientWhenSelected = false }: RoleCardProps) {
           style={{
             transformStyle: "preserve-3d",
             WebkitTransformStyle: "preserve-3d",
-            transform: "translate3d(0, 0, 0)",
-            willChange:
-              isRevealed || isFlipping ? "transform, opacity" : "auto",
+            willChange: isRevealed || isFlipping ? "transform" : "auto",
           }}
           className="preserve-3d relative aspect-[3/4.2] w-full"
         >
-          {/* FACE CACHÉE (0°) — Dos de carte Dark Frosted Glass */}
+          {/* FACE CACHÉE (0°) — Enveloppe 3D pure sans backdrop-filter direct pour préserver backface-visibility */}
           <div
-            className="backface-hidden glass-panel absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-[26px] p-5 transition-[border-color,box-shadow] duration-300"
+            aria-hidden={isRevealed}
+            className="backface-hidden absolute inset-0 rounded-[26px]"
             style={{
               backfaceVisibility: "hidden",
               WebkitBackfaceVisibility: "hidden",
-              transform: "rotateY(0deg) translateZ(1px)",
-              zIndex: isRevealed ? 0 : 2,
-              ...(ambientWhenSelected
-                ? {
-                    borderColor: `${role.aura.primary}4A`,
-                    boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 32px ${role.aura.primary}22, 0 24px 56px -12px rgba(0, 0, 0, 0.72)`,
-                  }
-                : {}),
+              transform: "rotateY(0deg) translateZ(2px)",
+              transformStyle: "flat",
+              pointerEvents: isRevealed ? "none" : "auto",
             }}
           >
-            {/* Reflet vitré diagonal lors du déclenchement du retournement */}
-            <motion.div
-              aria-hidden="true"
-              initial={false}
-              animate={{
-                x: isRevealed ? "140%" : "-140%",
-                opacity: isRevealed ? [0, 0.75, 0] : 0,
-              }}
-              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-none absolute inset-y-0 -left-1/2 w-2/3 -skew-x-12"
+            <div
+              className="relative flex h-full w-full flex-col items-center justify-between overflow-hidden rounded-[26px] border border-white/15 p-5 transition-[border-color,box-shadow] duration-300"
               style={{
-                willChange: isRevealed ? "transform, opacity" : "auto",
                 background:
-                  "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.22) 50%, transparent 100%)",
+                  "linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.015) 38%, rgba(9, 10, 15, 0) 100%), linear-gradient(160deg, rgba(20, 21, 32, 0.94) 0%, rgba(12, 13, 18, 0.96) 55%, rgba(8, 9, 14, 0.98) 100%)",
+                boxShadow: ambientWhenSelected
+                  ? `inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 32px ${role.aura.primary}22, 0 24px 56px -12px rgba(0, 0, 0, 0.72)`
+                  : "inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 24px 56px -12px rgba(0, 0, 0, 0.72), 0 6px 20px rgba(0, 0, 0, 0.36)",
+                ...(ambientWhenSelected
+                  ? {
+                      borderColor: `${role.aura.primary}4A`,
+                    }
+                  : {}),
               }}
-            />
-
-            {/* Bordure intérieure fine */}
-            <div className="pointer-events-none absolute inset-2.5 rounded-[18px] border border-white/12" />
-
-            {/* Ornements de coins */}
-            <span className="pointer-events-none absolute left-4 top-4 h-2.5 w-2.5 border-l-2 border-t-2 border-amber-300/55" />
-            <span className="pointer-events-none absolute right-4 top-4 h-2.5 w-2.5 border-r-2 border-t-2 border-amber-300/55" />
-            <span className="pointer-events-none absolute bottom-4 left-4 h-2.5 w-2.5 border-b-2 border-l-2 border-amber-300/55" />
-            <span className="pointer-events-none absolute bottom-4 right-4 h-2.5 w-2.5 border-b-2 border-r-2 border-amber-300/55" />
-
-            {/* En-tête dos de carte */}
-            <div className="relative z-10 flex w-full items-center justify-between px-1 pt-1 text-[10px] font-semibold tracking-[0.22em] uppercase text-amber-200/75">
-              <span>Identité</span>
-              <span className="inline-flex items-center gap-1 text-rose-300/85">
-                <Lock className="h-3 w-3" aria-hidden="true" />
-                Scellée
-              </span>
-            </div>
-
-            {/* Sceau central Lune de Sang */}
-            <div className="relative z-10 flex flex-col items-center justify-center">
+            >
+              {/* Reflet vitré diagonal lors du déclenchement du retournement */}
               <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 48, repeat: Infinity, ease: "linear" }}
-                className="flex h-32 w-32 items-center justify-center rounded-full border border-dashed border-amber-300/30"
-              >
-                <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/15 bg-gradient-to-b from-rose-950/55 via-[#12131C]/80 to-[#090A0F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),inset_0_0_24px_rgba(225,29,72,0.28)]" />
-              </motion.div>
-              <Moon
-                className="pointer-events-none absolute h-10 w-10 text-amber-200 drop-shadow-[0_0_14px_rgba(212,175,55,0.65)]"
-                strokeWidth={1.5}
                 aria-hidden="true"
-              />
-            </div>
-
-            {/* Instruction tactile */}
-            <div className="relative z-10 flex flex-col items-center gap-1.5 pb-1 text-center">
-              <motion.div
-                animate={{ scale: [1, 1.07, 1], opacity: [0.78, 1, 0.78] }}
-                transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
-              >
-                <Fingerprint className="h-5 w-5" aria-hidden="true" />
-              </motion.div>
-              <p className="text-xs font-medium tracking-wide text-amber-100/95">
-                Maintenir appuyé
-              </p>
-              <p className="text-[11px] text-slate-400">
-                pour révéler votre rôle
-              </p>
-            </div>
-          </div>
-
-          {/* FACE RÉVÉLÉE (180°) — Verre dépoli sombre Apple + aura du rôle & reflet glissant */}
-          <div
-            className={`backface-hidden glass-panel absolute inset-0 flex flex-col items-center justify-between overflow-hidden rounded-[26px] border ${role.aura.borderClass} p-5`}
-            style={{
-              backfaceVisibility: "hidden",
-              WebkitBackfaceVisibility: "hidden",
-              transform: "rotateY(180deg) translateZ(1px)",
-              zIndex: isRevealed ? 2 : 0,
-              background: `linear-gradient(165deg, ${role.aura.primary}1F 0%, rgba(12, 13, 18, 0.72) 48%, rgba(9, 10, 15, 0.86) 100%)`,
-              boxShadow: isRevealed
-                ? `inset 0 1px 0 rgba(255, 255, 255, 0.22), ${role.aura.glowShadow}`
-                : "inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 24px 56px -12px rgba(0, 0, 0, 0.72)",
-            }}
-          >
-            {/* Reflet vitré glissant à l'ouverture de la carte */}
-            <motion.div
-              aria-hidden="true"
-              initial={false}
-              animate={{
-                x: isRevealed ? ["-135%", "160%"] : "-135%",
-                opacity: isRevealed ? [0, 0.85, 0] : 0,
-              }}
-              transition={{ duration: 0.72, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -skew-x-12"
-              style={{
-                willChange: isRevealed ? "transform, opacity" : "auto",
-                background:
-                  "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.26) 48%, rgba(255, 255, 255, 0.08) 60%, transparent 100%)",
-              }}
-            />
-
-            {/* Reflet spéculaire holographique interactif suivant le doigt */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 transition-opacity duration-200"
-              style={{
-                opacity: isRevealed ? 0.62 : 0,
-                background: `radial-gradient(circle at ${sheenX}% ${sheenY}%, rgba(255, 255, 255, 0.24) 0%, ${role.aura.primary}28 32%, transparent 65%)`,
-              }}
-            />
-
-            {/* Lueur interne douce en haut de la carte */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -top-12 left-1/2 h-36 w-56 -translate-x-1/2 rounded-full blur-2xl"
-              style={{
-                background: `radial-gradient(circle, ${role.aura.primary}50 0%, transparent 72%)`,
-              }}
-            />
-
-            {/* Badge de faction */}
-            <div className="relative z-10 flex w-full items-center justify-between pt-0.5">
-              <span
-                className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.18em] uppercase shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] ${role.aura.badgeClass}`}
-              >
-                {role.factionLabel}
-              </span>
-              <span className="text-[10px] font-medium tracking-[0.16em] uppercase text-slate-300/75">
-                Secret
-              </span>
-            </div>
-
-            {/* Emblème du rôle */}
-            <div className="relative z-10 my-1 flex flex-col items-center text-center">
-              <div
-                className="glass-subcard mb-3 flex h-20 w-20 items-center justify-center rounded-full"
-                style={{
-                  boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 28px ${role.aura.primary}48, inset 0 0 18px ${role.aura.primary}2E`,
+                initial={false}
+                animate={{
+                  x: isRevealed ? "140%" : "-140%",
+                  opacity: isRevealed ? [0, 0.75, 0] : 0,
                 }}
-              >
-                <RoleIcon
-                  icon={role.icon}
-                  color={role.aura.primary}
-                  glow
-                  animated
-                  className="h-10 w-10 transition-transform duration-300"
-                  strokeWidth={1.75}
+                transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+                className="pointer-events-none absolute inset-y-0 -left-1/2 w-2/3 -skew-x-12"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.22) 50%, transparent 100%)",
+                }}
+              />
+
+              {/* Bordure intérieure fine */}
+              <div className="pointer-events-none absolute inset-2.5 rounded-[18px] border border-white/12" />
+
+              {/* Ornements de coins */}
+              <span className="pointer-events-none absolute left-4 top-4 h-2.5 w-2.5 border-l-2 border-t-2 border-amber-300/55" />
+              <span className="pointer-events-none absolute right-4 top-4 h-2.5 w-2.5 border-r-2 border-t-2 border-amber-300/55" />
+              <span className="pointer-events-none absolute bottom-4 left-4 h-2.5 w-2.5 border-b-2 border-l-2 border-amber-300/55" />
+              <span className="pointer-events-none absolute bottom-4 right-4 h-2.5 w-2.5 border-b-2 border-r-2 border-amber-300/55" />
+
+              {/* En-tête dos de carte */}
+              <div className="relative z-10 flex w-full items-center justify-between px-1 pt-1 text-[10px] font-semibold tracking-[0.22em] uppercase text-amber-200/75">
+                <span>Identité</span>
+                <span className="inline-flex items-center gap-1 text-rose-300/85">
+                  <Lock className="h-3 w-3" aria-hidden="true" />
+                  Scellée
+                </span>
+              </div>
+
+              {/* Sceau central Lune de Sang */}
+              <div className="relative z-10 flex flex-col items-center justify-center">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 48, repeat: Infinity, ease: "linear" }}
+                  className="flex h-32 w-32 items-center justify-center rounded-full border border-dashed border-amber-300/30"
+                >
+                  <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/15 bg-gradient-to-b from-rose-950/55 via-[#12131C]/80 to-[#090A0F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),inset_0_0_24px_rgba(225,29,72,0.28)]" />
+                </motion.div>
+                <Moon
+                  className="pointer-events-none absolute h-10 w-10 text-amber-200 drop-shadow-[0_0_14px_rgba(212,175,55,0.65)]"
+                  strokeWidth={1.5}
+                  aria-hidden="true"
                 />
               </div>
 
-              <h2 className="font-display text-2xl font-bold tracking-wide text-amber-50">
-                {role.name}
-              </h2>
-              <p
-                className="mt-0.5 text-[11px] font-medium tracking-wider uppercase"
-                style={{ color: role.aura.primary }}
-              >
-                {role.subtitle}
-              </p>
+              {/* Instruction tactile */}
+              <div className="relative z-10 flex flex-col items-center gap-1.5 pb-1 text-center">
+                <motion.div
+                  animate={{ scale: [1, 1.07, 1], opacity: [0.78, 1, 0.78] }}
+                  transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-amber-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]"
+                >
+                  <Fingerprint className="h-5 w-5" aria-hidden="true" />
+                </motion.div>
+                <p className="text-xs font-medium tracking-wide text-amber-100/95">
+                  Maintenir appuyé
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  pour révéler votre rôle
+                </p>
+              </div>
             </div>
+          </div>
 
-            {/* Pouvoir & Lore sur verre dépoli interne optimisé mobile */}
-            <div className="glass-subcard relative z-10 flex flex-col gap-2 rounded-2xl p-3 text-center">
-              <p className="text-xs leading-relaxed text-slate-100/95">
-                {role.ability}
-              </p>
-              <p className="text-[11px] italic text-slate-300/80">
-                « {role.lore} »
-              </p>
-            </div>
-
-            {/* Bouton/indication de fermeture instantanée */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRevealEnd();
+          {/* FACE RÉVÉLÉE (180°) — Enveloppe 3D pure à l'endroit avec flash vitré & aura du rôle */}
+          <div
+            aria-hidden={!isRevealed}
+            className="backface-hidden absolute inset-0 rounded-[26px]"
+            style={{
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
+              transform: "rotateY(180deg) translateZ(2px)",
+              transformStyle: "flat",
+              pointerEvents: isRevealed ? "auto" : "none",
+            }}
+          >
+            <div
+              className={`relative flex h-full w-full flex-col items-center justify-between overflow-hidden rounded-[26px] border ${role.aura.borderClass} p-5`}
+              style={{
+                background: `linear-gradient(165deg, ${role.aura.primary}29 0%, rgba(16, 17, 25, 0.94) 48%, rgba(9, 10, 15, 0.98) 100%)`,
+                boxShadow: isRevealed
+                  ? `inset 0 1px 0 rgba(255, 255, 255, 0.24), ${role.aura.glowShadow}`
+                  : "inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 24px 56px -12px rgba(0, 0, 0, 0.72)",
               }}
-              className="glass-subcard relative z-10 rounded-full px-3 py-1 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-200/85 transition hover:bg-black/60"
             >
-              Relâcher ou toucher pour masquer
-            </button>
+              {/* Reflet vitré glissant / flash lumineux à l'ouverture de la carte */}
+              <motion.div
+                key={`flash-${pulseWave}`}
+                aria-hidden="true"
+                initial={{ x: "-135%", opacity: 0 }}
+                animate={{
+                  x: isRevealed ? "160%" : "-135%",
+                  opacity: isRevealed ? [0, 0.92, 0] : 0,
+                }}
+                transition={{ duration: 0.68, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
+                className="pointer-events-none absolute inset-y-0 left-0 w-1/2 -skew-x-12"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.34) 48%, rgba(255, 255, 255, 0.12) 60%, transparent 100%)",
+                }}
+              />
+
+              {/* Reflet spéculaire holographique interactif suivant le doigt */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 transition-opacity duration-200"
+                style={{
+                  opacity: isRevealed ? 0.66 : 0,
+                  background: `radial-gradient(circle at ${sheenX}% ${sheenY}%, rgba(255, 255, 255, 0.26) 0%, ${role.aura.primary}2E 32%, transparent 65%)`,
+                }}
+              />
+
+              {/* Lueur interne douce en haut de la carte */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -top-12 left-1/2 h-36 w-56 -translate-x-1/2 rounded-full blur-2xl"
+                style={{
+                  background: `radial-gradient(circle, ${role.aura.primary}55 0%, transparent 72%)`,
+                }}
+              />
+
+              {/* Badge de faction */}
+              <div className="relative z-10 flex w-full items-center justify-between pt-0.5">
+                <span
+                  className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-[0.18em] uppercase shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] ${role.aura.badgeClass}`}
+                >
+                  {role.factionLabel}
+                </span>
+                <span className="text-[10px] font-medium tracking-[0.16em] uppercase text-slate-300/75">
+                  Secret
+                </span>
+              </div>
+
+              {/* Emblème du rôle */}
+              <div className="relative z-10 my-1 flex flex-col items-center text-center">
+                <div
+                  className="mb-3 flex h-20 w-20 items-center justify-center rounded-full border border-white/15 bg-black/55"
+                  style={{
+                    boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 28px ${role.aura.primary}48, inset 0 0 18px ${role.aura.primary}2E`,
+                  }}
+                >
+                  <RoleIcon
+                    icon={role.icon}
+                    color={role.aura.primary}
+                    glow
+                    animated
+                    className="h-10 w-10 transition-transform duration-300"
+                    strokeWidth={1.75}
+                  />
+                </div>
+
+                <h2 className="font-display text-2xl font-bold tracking-wide text-amber-50">
+                  {role.name}
+                </h2>
+                <p
+                  className="mt-0.5 text-[11px] font-medium tracking-wider uppercase"
+                  style={{ color: role.aura.primary }}
+                >
+                  {role.subtitle}
+                </p>
+              </div>
+
+              {/* Pouvoir & Lore sur cartouche sombre optimisée mobile */}
+              <div className="relative z-10 flex flex-col gap-2 rounded-2xl border border-white/12 bg-black/55 p-3 text-center">
+                <p className="text-xs leading-relaxed text-slate-100/95">
+                  {role.ability}
+                </p>
+                <p className="text-[11px] italic text-slate-300/80">
+                  « {role.lore} »
+                </p>
+              </div>
+
+              {/* Bouton/indication de fermeture instantanée */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRevealEnd();
+                }}
+                className="relative z-10 rounded-full border border-white/15 bg-black/60 px-3 py-1 text-[10px] font-medium tracking-[0.16em] uppercase text-slate-200/85 transition hover:bg-black/75"
+              >
+                Relâcher ou toucher pour masquer
+              </button>
+            </div>
           </div>
         </motion.div>
       </div>

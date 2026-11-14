@@ -29,60 +29,75 @@ const VARIANT_POOLS: Array<{
       "chasseur",
       "cupidon",
       "salvateur",
+      "voleur",
       "corbeau",
+      "juge-begue",
       "montreur-dours",
       "petite-fille",
       "ancien",
       "idiot-du-village",
+      "soeurs",
+      "freres",
     ],
     specialWolves: [
+      "loup-mystique",
       "loup-garou-blanc",
       "infect-pere-des-loups",
       "grand-mechant-loup",
     ],
-    solitaires: ["enfant-sauvage", "joueur-de-flute", "ange"],
+    solitaires: ["enfant-sauvage", "pyromane", "joueur-de-flute", "ange"],
   },
   {
     label: "Nuit des Arcanes",
     villagePriority: [
       "voyante",
+      "comedien",
       "salvateur",
       "sorciere",
       "renard",
+      "juge-begue",
       "servante-devouee",
       "ancien",
       "chasseur",
+      "voleur",
       "petite-fille",
       "cupidon",
       "idiot-du-village",
+      "soeurs",
     ],
     specialWolves: [
+      "loup-mystique",
       "infect-pere-des-loups",
       "grand-mechant-loup",
       "loup-garou-blanc",
     ],
-    solitaires: ["joueur-de-flute", "ange", "enfant-sauvage"],
+    solitaires: ["pyromane", "joueur-de-flute", "ange", "enfant-sauvage"],
   },
   {
     label: "Chaos & Trahisons",
     villagePriority: [
       "voyante",
+      "voleur",
       "corbeau",
       "chasseur",
+      "juge-begue",
       "chevalier-epee-rouillee",
+      "comedien",
       "cupidon",
       "sorciere",
       "idiot-du-village",
       "servante-devouee",
       "salvateur",
       "renard",
+      "freres",
     ],
     specialWolves: [
       "loup-garou-blanc",
+      "loup-mystique",
       "infect-pere-des-loups",
       "grand-mechant-loup",
     ],
-    solitaires: ["enfant-sauvage", "joueur-de-flute", "ange"],
+    solitaires: ["pyromane", "enfant-sauvage", "joueur-de-flute", "ange"],
   },
   {
     label: "Bastion du Hameau",
@@ -90,32 +105,47 @@ const VARIANT_POOLS: Array<{
       "salvateur",
       "montreur-dours",
       "voyante",
+      "juge-begue",
       "chevalier-epee-rouillee",
       "ancien",
+      "comedien",
       "sorciere",
       "chasseur",
+      "voleur",
       "corbeau",
       "petite-fille",
       "cupidon",
+      "soeurs",
     ],
     specialWolves: [
       "grand-mechant-loup",
+      "loup-mystique",
       "infect-pere-des-loups",
       "loup-garou-blanc",
     ],
-    solitaires: ["ange", "enfant-sauvage", "joueur-de-flute"],
+    solitaires: ["ange", "pyromane", "enfant-sauvage", "joueur-de-flute"],
   },
 ];
 
+function getRecommendedWolfCount(playerCount: number): number {
+  if (playerCount <= 5) return 1;
+  if (playerCount <= 9) return 2;
+  if (playerCount <= 14) return 3;
+  if (playerCount <= 19) return 4;
+  if (playerCount <= 24) return 5;
+  if (playerCount <= 28) return 6;
+  return 7;
+}
+
 /**
- * Calcule une composition équilibrée pour N joueurs (4 à 20).
+ * Calcule une composition équilibrée pour N joueurs (4 à 30).
  * L'index `variantIndex` permet de générer plusieurs combinaisons valides et amusantes.
  */
 export function generateBalancedComposition(
   rawCount: number,
   variantIndex = 0
 ): CompositionPresetInfo {
-  const playerCount = Math.max(4, Math.min(20, Math.round(rawCount)));
+  const playerCount = Math.max(4, Math.min(30, Math.round(rawCount)));
   const variant =
     VARIANT_POOLS[((variantIndex % VARIANT_POOLS.length) + VARIANT_POOLS.length) % VARIANT_POOLS.length];
 
@@ -123,30 +153,28 @@ export function generateBalancedComposition(
     GAME_ROLES.map((role) => [role.id, 0])
   );
 
-  // 1. Nombre cible de loups selon la taille du village (~1 loup pour 4 joueurs)
-  let totalWolves = 1;
-  if (playerCount >= 6 && playerCount <= 9) totalWolves = 2;
-  else if (playerCount >= 10 && playerCount <= 14) totalWolves = 3;
-  else if (playerCount >= 15) totalWolves = 4;
+  // 1. Nombre cible de loups selon la taille du village (~1 loup pour 4-5 joueurs, jusqu'à 7 à 30 joueurs)
+  const totalWolves = getRecommendedWolfCount(playerCount);
 
-  // À partir de 10+ joueurs, on peut introduire un loup spécial selon la variante
   let normalWolves = totalWolves;
-  if (playerCount >= 10) {
+  if (playerCount >= 8 && normalWolves >= 2) {
     const firstSpecial = variant.specialWolves[0];
-    if (
-      firstSpecial &&
-      (firstSpecial === "loup-garou-blanc" ||
-        firstSpecial === "grand-mechant-loup" ||
-        firstSpecial === "infect-pere-des-loups")
-    ) {
+    if (firstSpecial && ROLE_BY_ID[firstSpecial]) {
       composition[firstSpecial] = 1;
       normalWolves -= 1;
     }
   }
-  if (playerCount >= 15 && normalWolves >= 2) {
+  if (playerCount >= 14 && normalWolves >= 2) {
     const secondSpecial = variant.specialWolves[1];
     if (secondSpecial && composition[secondSpecial] === 0) {
       composition[secondSpecial] = 1;
+      normalWolves -= 1;
+    }
+  }
+  if (playerCount >= 21 && normalWolves >= 2) {
+    const thirdSpecial = variant.specialWolves[2];
+    if (thirdSpecial && composition[thirdSpecial] === 0) {
+      composition[thirdSpecial] = 1;
       normalWolves -= 1;
     }
   }
@@ -154,8 +182,8 @@ export function generateBalancedComposition(
 
   let assigned = Object.values(composition).reduce((sum, n) => sum + n, 0);
 
-  // 2. Ajout éventuel d'un rôle solitaire / ambigu (Enfant Sauvage ou Ange) à 10+ joueurs
-  if (playerCount >= 10 && variantIndex % 2 === 1) {
+  // 2. Rôles solitaires / neutres à partir de 9-10 joueurs
+  if (playerCount >= 9 && variantIndex % 2 === 1) {
     const solitaireId = variant.solitaires[0];
     if (solitaireId && assigned < playerCount) {
       composition[solitaireId] = 1;
@@ -169,11 +197,25 @@ export function generateBalancedComposition(
       assigned += 1;
     }
   }
+  if (playerCount >= 20) {
+    const thirdSolitaire = variant.solitaires[2];
+    if (thirdSolitaire && composition[thirdSolitaire] === 0 && assigned < playerCount) {
+      composition[thirdSolitaire] = 1;
+      assigned += 1;
+    }
+  }
 
-  // 3. Ajout progressif des rôles clés du Village selon le nombre de joueurs
-  // Objectif : garder au moins ~1-3 Simples Villageois dès 6+ joueurs pour la déduction
+  // 3. Ajout progressif des rôles clés du Village selon la taille du salon
   const targetMinVillagers =
-    playerCount <= 5 ? 1 : playerCount <= 8 ? 2 : playerCount <= 13 ? 3 : 4;
+    playerCount <= 5
+      ? 1
+      : playerCount <= 8
+        ? 2
+        : playerCount <= 14
+          ? 3
+          : playerCount <= 22
+            ? 5
+            : 7;
   const maxSpecialSlots = Math.max(1, playerCount - assigned - targetMinVillagers);
 
   let addedSpecials = 0;
@@ -182,9 +224,14 @@ export function generateBalancedComposition(
     const role = ROLE_BY_ID[roleId];
     if (!role || playerCount < role.minPlayers) continue;
 
-    composition[roleId] = 1;
-    assigned += 1;
-    addedSpecials += 1;
+    const bundleSize = roleId === "soeurs" ? 2 : roleId === "freres" ? 3 : 1;
+    if (addedSpecials + bundleSize > maxSpecialSlots || assigned + bundleSize > playerCount) {
+      continue;
+    }
+
+    composition[roleId] = bundleSize;
+    assigned += bundleSize;
+    addedSpecials += bundleSize;
   }
 
   // 4. Compléter le reste avec des Simples Villageois
@@ -316,12 +363,12 @@ export const LOBBY_ROLE_PRESETS: LobbyRolePresetMeta[] = [
   {
     id: "enquete-deduction",
     label: "Enquête & Déduction",
-    description: "Voyante, Renard, Corbeau, Montreur d'Ours & Salvateur",
+    description: "Voyante, Renard, Comédien, Loup Noir, Corbeau & Ours",
   },
   {
     id: "chaos-alliances",
     label: "Chaos & Alliances",
-    description: "Cupidon, Infect Père, Servante, Flûte & Enfant Sauvage",
+    description: "Voleur, Pyromane, Juge Bègue, Cupidon & Infect Père",
   },
 ];
 
@@ -332,34 +379,48 @@ export function buildLobbyPresetComposition(
   presetId: LobbyRolePresetId,
   rawPlayerCount: number
 ): RoleComposition {
-  const playerCount = Math.max(4, Math.min(20, rawPlayerCount));
+  const playerCount = Math.max(4, Math.min(30, rawPlayerCount));
   const composition: RoleComposition = Object.fromEntries(
     GAME_ROLES.map((role) => [role.id, 0])
   );
 
-  let targetWolves = 1;
-  if (playerCount >= 6 && playerCount <= 9) targetWolves = 2;
-  else if (playerCount >= 10 && playerCount <= 14) targetWolves = 3;
-  else if (playerCount >= 15) targetWolves = 4;
+  const targetWolves = getRecommendedWolfCount(playerCount);
 
   const assignList = (ids: string[], limit: number): number => {
     let added = 0;
     for (const id of ids) {
       if (added >= limit) break;
-      if (composition[id] === 0 && ROLE_BY_ID[id]) {
-        composition[id] = 1;
-        added += 1;
+      const role = ROLE_BY_ID[id];
+      const count = id === "soeurs" ? 2 : id === "freres" ? 3 : 1;
+      if (composition[id] === 0 && role && added + count <= limit) {
+        composition[id] = count;
+        added += count;
       }
     }
     return added;
   };
 
   if (presetId === "rapide-classique") {
-    composition["loup-garou"] = targetWolves;
+    let assignedWolves = 0;
+    if (playerCount >= 12 && targetWolves >= 3) {
+      composition["loup-mystique"] = 1;
+      assignedWolves += 1;
+    }
+    composition["loup-garou"] = Math.max(1, targetWolves - assignedWolves);
     let remaining = playerCount - targetWolves;
     const specials = assignList(
-      ["voyante", "sorciere", "chasseur", "cupidon", "salvateur", "ancien"],
-      Math.max(1, remaining - (playerCount >= 6 ? 2 : 1))
+      [
+        "voyante",
+        "sorciere",
+        "chasseur",
+        "cupidon",
+        "salvateur",
+        "ancien",
+        "voleur",
+        "juge-begue",
+        "soeurs",
+      ],
+      Math.max(1, remaining - (playerCount >= 18 ? 4 : playerCount >= 6 ? 2 : 1))
     );
     remaining -= specials;
     composition["simple-villageois"] = Math.max(0, remaining);
@@ -367,12 +428,16 @@ export function buildLobbyPresetComposition(
   }
 
   if (presetId === "enquete-deduction") {
+    let assignedWolves = 0;
     if (playerCount >= 8 && targetWolves >= 2) {
       composition["grand-mechant-loup"] = 1;
-      composition["loup-garou"] = targetWolves - 1;
-    } else {
-      composition["loup-garou"] = targetWolves;
+      assignedWolves += 1;
     }
+    if (playerCount >= 11 && assignedWolves < targetWolves) {
+      composition["loup-mystique"] = 1;
+      assignedWolves += 1;
+    }
+    composition["loup-garou"] = Math.max(1, targetWolves - assignedWolves);
     let remaining = playerCount - targetWolves;
     const specials = assignList(
       [
@@ -381,12 +446,15 @@ export function buildLobbyPresetComposition(
         "corbeau",
         "montreur-dours",
         "salvateur",
+        "comedien",
+        "juge-begue",
         "petite-fille",
         "sorciere",
         "chevalier-epee-rouillee",
         "ancien",
+        "freres",
       ],
-      Math.max(2, remaining - 1)
+      Math.max(2, remaining - (playerCount >= 18 ? 4 : 1))
     );
     remaining -= specials;
     composition["simple-villageois"] = Math.max(0, remaining);
@@ -403,17 +471,26 @@ export function buildLobbyPresetComposition(
     composition["loup-garou-blanc"] = 1;
     assignedWolves += 1;
   }
+  if (playerCount >= 14 && assignedWolves < targetWolves) {
+    composition["loup-mystique"] = 1;
+    assignedWolves += 1;
+  }
   composition["loup-garou"] = Math.max(1, targetWolves - assignedWolves);
   const actualWolves =
     (composition["infect-pere-des-loups"] ?? 0) +
     (composition["loup-garou-blanc"] ?? 0) +
+    (composition["loup-mystique"] ?? 0) +
     (composition["loup-garou"] ?? 0);
 
   let remaining = playerCount - actualWolves;
   const chaosPool = [
     "cupidon",
+    "voleur",
+    "comedien",
+    "pyromane",
     "servante-devouee",
     "enfant-sauvage",
+    "juge-begue",
     "chevalier-epee-rouillee",
     "joueur-de-flute",
     "chasseur",
@@ -421,8 +498,12 @@ export function buildLobbyPresetComposition(
     "corbeau",
     "idiot-du-village",
     "ange",
+    "soeurs",
   ];
-  const specials = assignList(chaosPool, Math.max(2, remaining - 1));
+  const specials = assignList(
+    chaosPool,
+    Math.max(2, remaining - (playerCount >= 18 ? 4 : 1))
+  );
   remaining -= specials;
   composition["simple-villageois"] = Math.max(0, remaining);
   return composition;
